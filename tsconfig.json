@@ -5,20 +5,10 @@
     "module": "ESNext",
     "moduleResolution": "node",
     "jsx": "react-jsx",
-  
-        "types": ["@vercel/node"],
-        // ...
-    
-      "include": ["src", "api"],
-    
-
+    "types": ["@vercel/node"],
     "strict": true,
     "skipLibCheck": true,
-    "forceConsistentCasingInFileNames": true,
-
-    "esModuleInterop": true,               // 👈 agrega
-    "allowSyntheticDefaultImports": true,  // 👈 agrega
-
+    "allowSyntheticDefaultImports": true,
     "baseUrl": ".",
     "paths": {
       "@/*": ["src/*"]
