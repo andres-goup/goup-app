@@ -218,7 +218,7 @@ function EventWizard() {
   const stepFields: Keys[][] = [
     ["nombre", "tipo"], // 0
     ["fecha", "horaInicio", "horaCierre"], // 1
-    ["capacidad", "presupuesto"], // 2
+    ["capacidad"], // 2
     ["promotor", "telefono", "email"], // 3
     ["desc", "generos"], // 4
     ["flyer", "imgSec"], // 5
@@ -379,26 +379,14 @@ function useSteps() {
     },
     {
       icon: "👥",
-      title: "Capacidad & Presupuesto",
+      title: "Capacidad",
       content: (
-        <LocalCard title="Capacidad & Presupuesto">
+        <LocalCard title="Capacidad">
           <RHFInput
             name="capacidad"
             type="number"
             label="Capacidad esperada *"
             placeholder="Ej: 800"
-          />
-          <RHFSelect
-            name="presupuesto"
-            label="Presupuesto del Evento"
-            placeholder="Rango de inversión"
-            options={[
-              "Hasta 1.000 USD",
-              "1.000 - 5.000 USD",
-              "5.000 - 15.000 USD",
-              "15.000 - 50.000 USD",
-              "50.000+ USD",
-            ]}
           />
         </LocalCard>
       ),
