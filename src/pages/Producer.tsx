@@ -9,7 +9,7 @@ import {
 import { zodResolver } from "@hookform/resolvers/zod";
 import toast from "react-hot-toast";
 import { motion, AnimatePresence } from "framer-motion";
-
+import logo from "../assets/goup_logo.png";
 import { producerSchema, type ProducerData } from "@/lib/schemas";
 import { useStepper } from "../hooks/useStepper";
 import { StepDots } from "../components/Stepper";
@@ -135,6 +135,15 @@ function ProducerWizard() {
 
   return (
     <main className="px-4 py-6 flex justify-center">
+        <header className="max-w-3xl mx-auto space-y-2 mb-8 text-center">
+        <img src={logo} alt="GoUp" className="mx-auto w-28" />
+        <h1 className="text-3xl md:text-4xl font-extrabold">
+          TRABAJA <span className="text-[#8e2afc]">CON</span> NOSOTROS
+        </h1>
+        <p className="text-white/70">
+          Ingresa tu productora para trabajar empezar con GoUp
+        </p>
+      </header>
       <EntityCard title="REGISTRO DE PRODUCTORA">
         {() => (
           <FormProvider {...methods}>
