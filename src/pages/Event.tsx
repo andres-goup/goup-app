@@ -1,0 +1,471 @@
+// src/pages/Event.tsx
+import React, { useState } from "react";
+import {
+  useForm,
+  FormProvider,
+  type FieldError,
+  type FieldPath,
+  type FieldErrors,
+  type FieldValues,
+  type Resolver,
+} from "react-hook-form";
+import { z } from "zod";
+import { zodResolver } from "@hookform/resolvers/zod";
+import toast from "react-hot-toast";
+import { motion, AnimatePresence } from "framer-motion";
+import logo from "@/assets/goup_logo.png"
+import { eventSchema } from "@/lib/schemas"; // ⬅️ ajusta la ruta si es distinta
+import { useStepper } from "@/hooks/useStepper";
+
+// **Solo estos controles compartidos** (son simples inputs, no genéricos en JSX)
+import {
+  RHFInput,
+  RHFTextarea,
+  RHFSelect,
+  RHFCheckboxGroup,
+  RHFFile,
+  StepErrorBanner, // este acepta { errors: string[] }
+} from "@/components/form/control"; // ⬅️ ajusta ruta si cambia
+
+/* =========================================================
+ * Tipos locales (NO afectan a otras páginas)
+ * =======================================================*/
+export type EventFormValues = z.infer<typeof eventSchema>;
+type Keys = FieldPath<EventFormValues>;
+
+/* =========================================================
+ * Defaults alineados al schema
+ * =======================================================*/
+const defaultEventValues: EventFormValues = {
+  nombre: "",
+  tipo: "",
+  fecha: "",
+  horaInicio: "",
+  horaCierre: "",
+  capacidad: 0,
+  presupuesto: "",
+  promotor: "",
+  telefono: "",
+  email: "",
+  desc: "",
+  generos: [],
+  flyer: null,
+  imgSec: null,
+};
+
+const generosMusicales = [
+  "Reguetón",
+  "Techno",
+  "House",
+  "Pop",
+  "Salsa",
+  "Hardstyle",
+  "Trance",
+  "Hip-Hop",
+  "Urbano",
+] as const;
+
+/* =========================================================
+ * Helpers locales
+ * =======================================================*/
+function isFieldError(v: unknown): v is FieldError {
+  return typeof v === "object" && v !== null && "message" in (v as Record<string, unknown>);
+}
+
+/** Aplana el objeto de errores de RHF a { "a.b.c": "mensaje" } */
+function flattenErrors<T extends FieldValues>(
+  obj: FieldErrors<T>,
+  prefix: FieldPath<T> | "" = ""
+): Record<FieldPath<T>, string> {
+  const out: Partial<Record<FieldPath<T>, string>> = {};
+
+  for (const [k, v] of Object.entries(obj)) {
+    const key = (prefix ? `${prefix}.${k}` : k) as FieldPath<T>;
+
+    if (isFieldError(v) && typeof v.message === "string") {
+      out[key] = v.message;
+    } else if (v && typeof v === "object") {
+      const nested = flattenErrors<T>(v as FieldErrors<T>, key);
+      Object.assign(out, nested);
+    }
+  }
+
+  return out as Record<FieldPath<T>, string>;
+}
+
+/** Devuelve solo los mensajes de los campos visibles del paso */
+function collectStepErrors<T extends FieldValues>(
+  errors: FieldErrors<T>,
+  fields: FieldPath<T>[]
+): string[] {
+  const flat = flattenErrors<T>(errors);
+  const msgs: string[] = [];
+  for (const f of fields) {
+    const err = flat[f];
+    if (err) msgs.push(err);
+  }
+  return msgs;
+}
+/* =========================================================
+ * UI locales (para no depender de tipos ajenos)
+ * =======================================================*/
+function StepDots({ step, total }: { step: number; total: number }) {
+  return (
+    <div className="flex items-center justify-center gap-2">
+      {Array.from({ length: total }).map((_, i) => (
+        <span
+          key={i}
+          className={`h-2 w-2 rounded-full ${
+            i === step ? "bg-[#8e2afc]" : "bg-white/20"
+          }`}
+        />
+      ))}
+    </div>
+  );
+}
+
+type LoadingButtonProps = React.ButtonHTMLAttributes<HTMLButtonElement> & {
+  loading?: boolean;
+  variant?: "solid" | "outline";
+};
+function LoadingButton({
+  loading,
+  variant = "solid",
+  children,
+  className = "",
+  ...rest
+}: LoadingButtonProps) {
+  const base =
+    "inline-flex items-center justify-center rounded-md px-4 py-2 text-sm font-medium transition disabled:opacity-50";
+  const styles =
+    variant === "outline"
+      ? "border border-white/20 bg-transparent hover:bg-white/10"
+      : "bg-[#8e2afc] hover:bg-[#7b1fe0]";
+  return (
+    <button className={`${base} ${styles} ${className}`} disabled={loading} {...rest}>
+      {loading ? "..." : children}
+    </button>
+  );
+}
+
+function LocalCard({
+  title,
+  children,
+}: {
+  title: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <section className="space-y-4">
+      <h2 className="text-2xl font-extrabold tracking-tight text-[#8e2afc] flex items-center gap-2">
+        {title}
+      </h2>
+      <div className="space-y-4">{children}</div>
+    </section>
+  );
+}
+
+function SuccessModal({
+  open,
+  title,
+  subtitle,
+  onClose,
+}: {
+  open: boolean;
+  title: string;
+  subtitle?: string;
+  onClose: () => void;
+}) {
+  if (!open) return null;
+  return (
+    <div className="fixed inset-0 z-50 grid place-items-center bg-black/60 backdrop-blur-sm">
+      <div className="max-w-md rounded-md bg-neutral-900 p-6 text-center shadow-lg">
+        <h2 className="mb-2 text-2xl font-semibold text-green-400">{title}</h2>
+        {subtitle && <p className="text-white/70">{subtitle}</p>}
+        <button
+          className="mt-6 rounded bg-[#8e2afc] px-4 py-2 text-sm font-medium hover:bg-[#7b1fe0]"
+          onClick={onClose}
+        >
+          Cerrar
+        </button>
+      </div>
+    </div>
+  );
+}
+
+/* =========================================================
+ * Página
+ * =======================================================*/
+export default function EventPage() {
+  return <EventWizard />;
+}
+
+function EventWizard() {
+  const methods = useForm<EventFormValues>({
+    resolver: zodResolver(eventSchema) as unknown as Resolver<EventFormValues>,
+    defaultValues: defaultEventValues,
+    mode: "onChange",
+  });
+
+  const [loadingStep, setLoadingStep] = useState(false);
+  const [stepErrors, setStepErrors] = useState<string[]>([]);
+  const [sent, setSent] = useState(false);
+
+  const steps = useSteps();
+  const { current, total, next, prev } = useStepper(steps);
+
+  // Campos por paso
+  const stepFields: Keys[][] = [
+    ["nombre", "tipo"], // 0
+    ["fecha", "horaInicio", "horaCierre"], // 1
+    ["capacidad", "presupuesto"], // 2
+    ["promotor", "telefono", "email"], // 3
+    ["desc", "generos"], // 4
+    ["flyer", "imgSec"], // 5
+    [], // 6 - review
+  ];
+
+  const onSubmitStep = async () => {
+    setLoadingStep(true);
+    const fields = stepFields[current];
+    const ok = await methods.trigger(fields, { shouldFocus: true });
+
+    if (!ok) {
+      const msgs = collectStepErrors(methods.formState.errors, fields);
+      setStepErrors(msgs);
+      toast.error(msgs[0] ?? "Corrige los campos para continuar.");
+      setLoadingStep(false);
+      return;
+    }
+
+    setStepErrors([]);
+    toast.success("Paso guardado ✅");
+    next();
+    setLoadingStep(false);
+    setTimeout(() => window.scrollTo({ top: 0, behavior: "smooth" }), 0);
+  };
+
+  const onSubmitFinal = async (data: EventFormValues) => {
+    try {
+      setLoadingStep(true);
+
+      const res = await fetch("/api/submit", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ type: "event", payload: data }),
+      });
+
+      if (!res.ok) {
+        const j = await res.json().catch(() => ({}));
+        throw new Error((j as { error?: string }).error ?? "Error al enviar");
+      }
+
+      toast.success("¡Evento enviado! 🎉");
+      setSent(true);
+    } catch (err) {
+      toast.error((err as Error).message ?? "Ups, algo salió mal");
+    } finally {
+      setLoadingStep(false);
+    }
+  };
+
+  return (
+    <main className="min-h-screen bg-black text-white px-4 py-8">
+      <header className="max-w-3xl mx-auto space-y-2 mb-8 text-center">
+        <img src={logo} alt="GoUp" className="mx-auto w-28" />
+        <h1 className="text-3xl md:text-4xl font-extrabold">
+          CREAR <span className="text-[#8e2afc]">EVENTO</span> NOCTURNO
+        </h1>
+        <p className="text-white/70">
+          Organiza la experiencia nocturna perfecta con GoUp
+        </p>
+      </header>
+
+      <FormProvider {...methods}>
+        <form
+          onSubmit={methods.handleSubmit(onSubmitFinal)}
+          className="max-w-3xl mx-auto space-y-8 mt-8"
+          noValidate
+        >
+          <StepDots step={current} total={total} />
+
+          <StepErrorBanner errors={stepErrors} />
+
+          <AnimatePresence mode="wait">
+            <motion.div
+              key={current}
+              initial={{ opacity: 0, x: 24 }}
+              animate={{ opacity: 1, x: 0 }}
+              exit={{ opacity: 0, x: -24 }}
+              transition={{ duration: 0.15 }}
+              className="space-y-6"
+            >
+              {steps[current].content}
+            </motion.div>
+          </AnimatePresence>
+
+          <div className="flex justify-between pt-6">
+          {current > 0 ? (
+            <LoadingButton type="button" variant="outline" onClick={prev}>
+              Atrás
+            </LoadingButton>
+          ) : (
+            <span />
+          )}
+
+          {current < total - 1 ? (
+            <LoadingButton
+              type="button"
+              loading={loadingStep}
+              onClick={onSubmitStep}
+            >
+              Siguiente
+            </LoadingButton>
+          ) : (
+            <LoadingButton type="submit" loading={loadingStep}>
+              Enviar formulario
+            </LoadingButton>
+          )}
+          </div>
+        </form>
+      </FormProvider>
+
+      <SuccessModal
+        open={sent}
+        title="¡Evento enviado!"
+        subtitle="Nos pondremos en contacto contigo pronto."
+        onClose={() => setSent(false)}
+      />
+    </main>
+  );
+}
+
+/* =========================================================
+ * Steps — sin genéricos ni children tipados raros
+ * =======================================================*/
+function useSteps() {
+  return [
+    {
+      icon: "🎵",
+      title: "Información del Evento",
+      content: (
+        <LocalCard title="Información del Evento">
+          <RHFInput
+            name="nombre"
+            label="Nombre del Evento *"
+            placeholder="Ej: PURPLE NIGHTS • MIDNIGHT VIBES"
+          />
+          <RHFSelect
+            name="tipo"
+            label="Tipo de Evento *"
+            options={["Club", "Festival", "After", "Privado", "Open Air", "Bar"]}
+            placeholder="Selecciona el tipo"
+          />
+        </LocalCard>
+      ),
+    },
+    {
+      icon: "🕒",
+      title: "Fecha & Horario",
+      content: (
+        <LocalCard title="Fecha & Horario">
+          <RHFInput name="fecha" type="date" label="Fecha del Evento *" />
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <RHFInput name="horaInicio" type="time" label="Hora de Inicio *" />
+            <RHFInput name="horaCierre" type="time" label="Hora de Cierre *" />
+          </div>
+        </LocalCard>
+      ),
+    },
+    {
+      icon: "👥",
+      title: "Capacidad & Presupuesto",
+      content: (
+        <LocalCard title="Capacidad & Presupuesto">
+          <RHFInput
+            name="capacidad"
+            type="number"
+            label="Capacidad esperada *"
+            placeholder="Ej: 800"
+          />
+          <RHFSelect
+            name="presupuesto"
+            label="Presupuesto del Evento"
+            placeholder="Rango de inversión"
+            options={[
+              "Hasta 1.000 USD",
+              "1.000 - 5.000 USD",
+              "5.000 - 15.000 USD",
+              "15.000 - 50.000 USD",
+              "50.000+ USD",
+            ]}
+          />
+        </LocalCard>
+      ),
+    },
+    {
+      icon: "📞",
+      title: "Contacto organizador",
+      content: (
+        <LocalCard title="Contacto organizador">
+          <RHFInput
+            name="promotor"
+            label="Nombre del Promotor *"
+            placeholder="Tu nombre o nombre artístico"
+          />
+          <RHFInput
+            name="telefono"
+            label="WhatsApp/Teléfono *"
+            placeholder="+56 9 1234 5678"
+          />
+          <RHFInput
+          name="email"
+          type="email"
+          label="Email *"
+          placeholder="promotor@goup.com"
+          />
+        </LocalCard>
+      ),
+    },
+    {
+      icon: "✨",
+      title: "Concepto & Experiencia",
+      content: (
+        <LocalCard title="Concepto & Experiencia">
+          <RHFTextarea
+            name="desc"
+            label="Describe la atmósfera, música, efectos especiales, dress code, etc. *"
+            rows={5}
+            placeholder="Género musical, DJ lineup, luces, máquinas de humo, dress code, ..."
+          />
+          <RHFCheckboxGroup
+            name="generos"
+            label="Géneros musicales (puedes elegir varios) *"
+            options={[...generosMusicales]}
+          />
+        </LocalCard>
+      ),
+    },
+    {
+      icon: "🛡️",
+      title: "Flyer & Seguridad",
+      content: (
+        <LocalCard title="Flyer & Seguridad">
+          <RHFFile name="flyer" label="Flyer del evento" />
+          <RHFFile name="imgSec" label="Imagen secundaria (opcional)" />
+        </LocalCard>
+      ),
+    },
+    {
+      icon: "✅",
+      title: "Revisión",
+      content: (
+        <LocalCard title="Revisión final">
+          <p className="text-sm text-white/70">
+            Revisa que toda la información sea correcta antes de enviar.
+          </p>
+        </LocalCard>
+      ),
+    },
+  ] as const;
+}

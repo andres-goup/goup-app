@@ -1,12 +1,11 @@
-import { Loader2 } from "lucide-react";
-import type { ButtonHTMLAttributes } from "react";
+import React from "react";
 
-type Props = ButtonHTMLAttributes<HTMLButtonElement> & {
+type Props = React.ButtonHTMLAttributes<HTMLButtonElement> & {
   loading?: boolean;
 };
 
-export function LoadingButton({
-  loading,
+export default function LoadingButton({
+  loading = false,
   children,
   className = "",
   ...props
@@ -15,13 +14,9 @@ export function LoadingButton({
     <button
       {...props}
       disabled={loading || props.disabled}
-      className={`relative inline-flex items-center justify-center rounded-md px-4 py-2 transition-transform active:scale-95 disabled:opacity-50 disabled:pointer-events-none ${className}`}
-      aria-busy={loading}
+      className={`px-4 py-2 rounded-md bg-[#8e2afc] hover:bg-[#7a23d9] disabled:opacity-50 transition-colors ${className}`}
     >
-      {loading && (
-        <Loader2 className="mr-2 h-4 w-4 animate-spin" aria-hidden="true" />
-      )}
-      {children}
+      {loading ? "Cargando..." : children}
     </button>
   );
 }

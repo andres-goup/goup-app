@@ -1,58 +1,86 @@
 // src/lib/schemas.ts
 import { z } from "zod";
 
-/* ---------- CLUB ---------- */
+/* =========================
+ *  CLUB
+ * =======================*/
 export const clubSchema = z.object({
-  nombre: z.string().min(2, "Ingresa el nombre del club"),
+  nombre: z.string().min(2, "El nombre es obligatorio"),
   email: z.string().email("Email inválido").optional().or(z.literal("")),
-  tel: z.string().optional(),
-  desc: z.string().optional(),
-  direccion: z.string().optional(),
-  comuna: z.string().optional(),
-  aforo: z.coerce.number().int().positive("Aforo inválido"),
-  banos: z.coerce.number().int().nonnegative().optional(),
-  amb: z.coerce.number().int().nonnegative().optional(),
+  tel: z.string().optional().or(z.literal("")),
+  desc: z.string().optional().or(z.literal("")),
+  direccion: z.string().optional().or(z.literal("")),
+  comuna: z.string().optional().or(z.literal("")),
+  aforo: z
+    .number({ invalid_type_error: "Debes indicar el aforo" })
+    .int()
+    .positive()
+    .or(z.string().transform((v) => (v ? Number(v) : undefined))),
+  banos: z
+    .number()
+    .int()
+    .nonnegative()
+    .optional()
+    .or(z.string().transform((v) => (v ? Number(v) : undefined))),
+  amb: z
+    .number()
+    .int()
+    .nonnegative()
+    .optional()
+    .or(z.string().transform((v) => (v ? Number(v) : undefined))),
   servicios: z.object({
-    estacionamiento: z.boolean().optional(),
-    guardarropia: z.boolean().optional(),
-    terraza: z.boolean().optional(),
-    accesibilidad: z.boolean().optional(),
-    wifi: z.boolean().optional(),
-    fumadores: z.boolean().optional(),
+    estacionamiento: z.boolean(),
+    guardarropia: z.boolean(),
+    terraza: z.boolean(),
+    accesibilidad: z.boolean(),
+    wifi: z.boolean(),
+    fumadores: z.boolean(),
   }),
   img_perfil: z.any().optional(),
   img_banner: z.any().optional(),
 });
 export type ClubData = z.infer<typeof clubSchema>;
 
-/* ---------- PRODUCTORA ---------- */
+/* =========================
+ *  PRODUCTORA
+ * =======================*/
 export const producerSchema = z.object({
-  nombre: z.string().min(2, "Ingresa el nombre de la productora"),
-  correo: z.string().email("Email inválido"),
-  tel: z.string().optional(),
+  nombre: z.string().min(2, "El nombre es obligatorio"),
+  correo: z.string().email("Correo inválido"),
+  tel: z.string().min(5, "Teléfono requerido"),
+  rut: z.string().min(5, "RUT requerido"),
+  rs: z.string().min(2, "Razón social requerida"),
   img_perfil_prod: z.any().optional(),
   img_banner_prod: z.any().optional(),
-  rut: z.string().optional(),
-  rs: z.string().optional(),
+  instagram: z.string().optional().or(z.literal("")),
+  web: z.string().optional().or(z.literal("")),
 });
 export type ProducerData = z.infer<typeof producerSchema>;
 
-/* ---------- EVENTO ---------- */
+/* =========================
+ *  EVENTO
+ * =======================*/
 export const eventSchema = z.object({
-  nombre: z.string().min(2, "Ingresa el nombre del evento"),
-  tipo: z.string().min(1, "Selecciona el tipo"),
-  fecha: z.string().min(1, "Requerido"),
-  inicio: z.string().min(1, "Requerido"),
-  fin: z.string().min(1, "Requerido"),
-  edad: z.coerce.number().int().positive(),
-  capacidad: z.string().min(1, "Selecciona capacidad"),
-  presupuesto: z.string().optional(),
-  promotor: z.string().min(2, "Ingresa el nombre del promotor"),
-  telefono: z.string().min(5, "Teléfono inválido"),
-  email: z.string().email("Email inválido"),
-  desc: z.string().optional(),
-  generos: z.array(z.string()).optional(),
-  flyer: z.any().optional(),
-  img_sec: z.any().optional(),
-});
-export type EventData = z.infer<typeof eventSchema>;
+    nombre: z.string().min(1, "Nombre requerido"),
+    tipo: z.string().min(1, "Tipo requerido"),
+    fecha: z.string().min(1, "Fecha requerida"),
+    horaInicio: z.string().min(1, "Hora de inicio requerida"),
+    horaCierre: z.string().min(1, "Hora de cierre requerida"),
+    capacidad: z.number().nonnegative().int(),
+    presupuesto: z.string().optional().default(""),
+    promotor: z.string().min(1, "Promotor requerido"),
+    telefono: z.string().min(1, "Teléfono requerido"),
+    email: z.string().email("Email inválido"),
+    desc: z.string().min(1, "Descripción requerida"),
+    generos: z.array(z.string()).min(1, "Selecciona al menos un género"),
+    flyer: z
+      .any()
+      .nullable()
+      .optional(),
+    imgSec: z
+      .any()
+      .nullable()
+      .optional(),
+  });
+  
+  export type EventFormValues = z.infer<typeof eventSchema>;
