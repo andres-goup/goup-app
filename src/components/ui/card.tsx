@@ -1,4 +1,5 @@
-import * as React from "react";
+// src/components/ui/card.tsx
+import React from "react";
 
 export function Card({
   className = "",
@@ -7,7 +8,7 @@ export function Card({
   return (
     <div
       {...props}
-      className={`bg-[#1f1b2e] p-6 rounded-md shadow-xl ${className}`}
+      className={`rounded-xl bg-[#0f0f16] border border-[#2b2140] ${className}`}
     />
   );
 }
