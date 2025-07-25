@@ -26,10 +26,10 @@ export default function Header() {
   const canCreateEvent = !!dbUser?.can_create_event || isAdmin || isClubOwner || isProductor;
 
   if (!dbUser && user) return null;
-  
+
   return (
     <header className="sticky top-0 z-50 w-full bg-black/70 backdrop-blur border-b border-white/10">
-      <div className="mx-auto max-w-6xl px-4 h-14 flex items-center justify-between">
+      <div className="w-full px-4 h-14 flex items-center justify-between overflow-hidden">
         {/* Logo */}
         <div className="flex items-center gap-3">
           <Link to="/" className="text-white font-extrabold text-lg">
@@ -38,7 +38,7 @@ export default function Header() {
 
           {/* Navegación desktop */}
           <nav className="hidden md:flex items-center gap-4 ml-6 text-sm">
-            <NavItem to="">Inicio</NavItem>
+            <NavItem to="/">Inicio</NavItem>
 
             {(isClubOwner || isAdmin) && (
               <NavItem to="/dashboard/club">Mi club</NavItem>
@@ -47,9 +47,10 @@ export default function Header() {
             {(isProductor || isAdmin) && (
               <NavItem to="/dashboard/productora">Mi productora</NavItem>
             )}
+
             {(isProductor || isAdmin) && (
-  <NavItem to="/mis-eventos">Mis eventos</NavItem>
-)}
+              <NavItem to="/mis-eventos">Mis eventos</NavItem>
+            )}
 
             {canCreateEvent && (
               <NavItem to="/evento/crear">Crear evento</NavItem>
@@ -61,7 +62,6 @@ export default function Header() {
 
         {/* Acciones derecha */}
         <div className="flex items-center gap-3">
-          {/* Botón login si no hay sesión */}
           {!user && (
             <Link
               to="/login"
@@ -71,7 +71,6 @@ export default function Header() {
             </Link>
           )}
 
-          {/* Avatar / menú usuario */}
           {user && (
             <div className="relative">
               <button
@@ -110,7 +109,6 @@ export default function Header() {
                         Mi perfil
                       </Link>
                     </li>
-
                     {isAdmin && (
                       <li>
                         <Link
@@ -122,7 +120,6 @@ export default function Header() {
                         </Link>
                       </li>
                     )}
-
                     <li>
                       <button
                         className="w-full text-left px-3 py-2 hover:bg-white/5"
@@ -140,7 +137,6 @@ export default function Header() {
             </div>
           )}
 
-          {/* Botón login visible en mobile */}
           {!user && (
             <Link
               to="/login"
@@ -150,9 +146,8 @@ export default function Header() {
             </Link>
           )}
 
-          {/* Hamburguesa mobile */}
           <button
-            className="md:hidden text-white"
+            className="md:hidden text-white text-2xl px-2"
             onClick={() => setMobileOpen((m) => !m)}
             aria-label="Abrir menú"
           >
@@ -165,7 +160,7 @@ export default function Header() {
       {mobileOpen && (
         <div className="md:hidden border-t border-white/10 bg-black/90">
           <nav className="px-4 py-3 space-y-2 text-sm">
-            <MobileNavItem to="/dasboard/home" onClick={() => setMobileOpen(false)}>
+            <MobileNavItem to="/" onClick={() => setMobileOpen(false)}>
               Inicio
             </MobileNavItem>
 
@@ -186,10 +181,14 @@ export default function Header() {
                 Mi productora
               </MobileNavItem>
             )}
+
             {(isProductor || isAdmin) && (
-              <MobileNavItem to="/dashboard/mis-eventos" onClick={() => setMobileOpen(false)}>
+              <MobileNavItem
+                to="/mis-eventos"
+                onClick={() => setMobileOpen(false)}
+              >
                 Mis eventos
-                 </MobileNavItem>
+              </MobileNavItem>
             )}
 
             {canCreateEvent && (
