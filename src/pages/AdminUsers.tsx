@@ -1,7 +1,7 @@
 // src/pages/AdminUsers.tsx
 import React, { useEffect, useState } from "react";
 import { supabase } from "@/lib/supabase";
-import useAuth from "@/auth/useAuth";
+import { useAuth } from "@/auth/AuthContext";
 import { toast } from "react-hot-toast";
 import Unauthorized from "./Unauthorized";
 

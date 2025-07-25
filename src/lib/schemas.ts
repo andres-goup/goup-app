@@ -66,7 +66,7 @@ export const eventSchema = z.object({
     fecha: z.string().min(1, "Fecha requerida"),
     horaInicio: z.string().min(1, "Hora de inicio requerida"),
     horaCierre: z.string().min(1, "Hora de cierre requerida"),
-    capacidad: z.number().nonnegative().int(),
+    capacidad: z.string().min(1,"Seleccione capacidad aproximada"),
     presupuesto: z.string().optional().default(""),
     promotor: z.string().min(1, "Promotor requerido"),
     telefono: z.string().min(1, "Teléfono requerido"),

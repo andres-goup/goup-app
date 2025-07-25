@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
-import useAuth from "@/auth/useAuth";
+import { useAuth } from "@/auth/AuthContext";
 
 export default function UserMenu() {
   const { user, dbUser, signOut } = useAuth();

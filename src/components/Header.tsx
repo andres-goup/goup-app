@@ -1,7 +1,7 @@
 // src/components/Header.tsx
 import { useState } from "react";
 import { Link, NavLink } from "react-router-dom";
-import useAuth from "@/auth/useAuth";
+import { useAuth } from "@/auth/AuthContext";
 
 export default function Header() {
   const { user, dbUser, signOut } = useAuth();
@@ -25,6 +25,8 @@ export default function Header() {
   const isProductor = dbUser?.rol === "productor";
   const canCreateEvent = !!dbUser?.can_create_event || isAdmin || isClubOwner || isProductor;
 
+  if (!dbUser && user) return null;
+  
   return (
     <header className="sticky top-0 z-50 w-full bg-black/70 backdrop-blur border-b border-white/10">
       <div className="mx-auto max-w-6xl px-4 h-14 flex items-center justify-between">
@@ -36,7 +38,7 @@ export default function Header() {
 
           {/* Navegación desktop */}
           <nav className="hidden md:flex items-center gap-4 ml-6 text-sm">
-            <NavItem to="/">Inicio</NavItem>
+            <NavItem to="">Inicio</NavItem>
 
             {(isClubOwner || isAdmin) && (
               <NavItem to="/dashboard/club">Mi club</NavItem>
@@ -45,6 +47,9 @@ export default function Header() {
             {(isProductor || isAdmin) && (
               <NavItem to="/dashboard/productora">Mi productora</NavItem>
             )}
+            {(isProductor || isAdmin) && (
+  <NavItem to="/mis-eventos">Mis eventos</NavItem>
+)}
 
             {canCreateEvent && (
               <NavItem to="/evento/crear">Crear evento</NavItem>
@@ -160,7 +165,7 @@ export default function Header() {
       {mobileOpen && (
         <div className="md:hidden border-t border-white/10 bg-black/90">
           <nav className="px-4 py-3 space-y-2 text-sm">
-            <MobileNavItem to="/" onClick={() => setMobileOpen(false)}>
+            <MobileNavItem to="/dasboard/home" onClick={() => setMobileOpen(false)}>
               Inicio
             </MobileNavItem>
 
@@ -180,6 +185,11 @@ export default function Header() {
               >
                 Mi productora
               </MobileNavItem>
+            )}
+            {(isProductor || isAdmin) && (
+              <MobileNavItem to="/dashboard/mis-eventos" onClick={() => setMobileOpen(false)}>
+                Mis eventos
+                 </MobileNavItem>
             )}
 
             {canCreateEvent && (

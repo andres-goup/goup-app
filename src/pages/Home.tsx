@@ -1,24 +1,25 @@
-import { Link } from "react-router-dom";
+import { useAuth } from "../auth/AuthContext";
+import { Button } from "@/components/ui/button";
+import logo from "../assets/goup_logo.png";
+import { AlignCenter } from "lucide-react";
+
 
 export default function Home() {
-  return (
-    <main className="max-w-lg mx-auto p-6 text-center">
-      <h1 className="text-3xl font-bold mb-6">GoUp – Formularios</h1>
-      <p className="text-white/70 mb-8">
-        Selecciona el formulario que quieres completar:
-      </p>
+  const { rol, loading } = useAuth();
 
-      <div className="flex flex-col gap-4">
-        <Link className="bg-[#8e2afc] py-3 rounded font-semibold" to="/club">
-          Registrar Club
-        </Link>
-        <Link className="bg-[#8e2afc] py-3 rounded font-semibold" to="/productora">
-          Registrar Productora
-        </Link>
-        <Link className="bg-[#8e2afc] py-3 rounded font-semibold" to="/evento">
-          Crear Evento
-        </Link>
-      </div>
+  if (loading) return <p>Cargando...</p>;
+  if (!rol) return <p>No tienes acceso. Contacta al administrador.</p>;
+
+  return (
+    <main className="min-h-screen flex items-center justify-center bg-black text-white">
+      <header className="max-w-3xl mx-auto space-y-2 mb-8 text-center">
+        <img src={logo} alt="GoUp" className="mx-auto w-28" style={{ width: '400px', height: '400px', alignItems: 'center'}}/>
+        <h1 className="text-3xl md:text-4xl font-extrabold">
+          Bienvenido a <span className="text-[#8e2afc]"> GOUP</span> 
+        </h1>
+        <p className="text-white/100 font-bold">Estamos para ayudarte</p>
+      
+      </header>
     </main>
   );
 }

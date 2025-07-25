@@ -1,5 +1,5 @@
 import { Navigate } from "react-router-dom";
-import useAuth from "./useAuth";
+import { useAuth } from "./AuthContext";
 import { hasAnyRole } from "./permissions";
 
 type Props = {

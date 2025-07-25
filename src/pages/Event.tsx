@@ -8,6 +8,7 @@ import {
   type FieldErrors,
   type FieldValues,
   type Resolver,
+  useFormContext,
 } from "react-hook-form";
 import { z } from "zod";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -16,6 +17,10 @@ import { motion, AnimatePresence } from "framer-motion";
 import logo from "@/assets/goup_logo.png"
 import { eventSchema } from "@/lib/schemas"; // ⬅️ ajusta la ruta si es distinta
 import { useStepper } from "@/hooks/useStepper";
+import { supabase } from "@/lib/supabase";
+import { MenuItem, TextField } from "@mui/material";
+import { Controller} from "react-hook-form";
+
 
 // **Solo estos controles compartidos** (son simples inputs, no genéricos en JSX)
 import {
@@ -33,6 +38,8 @@ import {
 export type EventFormValues = z.infer<typeof eventSchema>;
 type Keys = FieldPath<EventFormValues>;
 
+
+
 /* =========================================================
  * Defaults alineados al schema
  * =======================================================*/
@@ -42,7 +49,7 @@ const defaultEventValues: EventFormValues = {
   fecha: "",
   horaInicio: "",
   horaCierre: "",
-  capacidad: 0,
+  capacidad: "",
   presupuesto: "",
   promotor: "",
   telefono: "",
@@ -52,6 +59,9 @@ const defaultEventValues: EventFormValues = {
   flyer: null,
   imgSec: null,
 };
+
+
+  // Otros campos si tienes más...
 
 const generosMusicales = [
   "Reguetón",
@@ -248,22 +258,36 @@ function EventWizard() {
   const onSubmitFinal = async (data: EventFormValues) => {
     try {
       setLoadingStep(true);
-
-      const res = await fetch("/api/submit", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ type: "event", payload: data }),
-      });
-
-      if (!res.ok) {
-        const j = await res.json().catch(() => ({}));
-        throw new Error((j as { error?: string }).error ?? "Error al enviar");
+  
+      // Paso 1: obtener el usuario autenticado
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+  
+      if (!user) throw new Error("No estás autenticado");
+  
+      // Paso 2: buscar el usuario en la tabla 'usuario' usando auth_user_id
+      const { data: usuarioData, error: usuarioError } = await supabase
+        .from("usuario")
+        .select("id_usuario")
+        .eq("auth_user_id", user.id)
+        .single();
+  
+      if (usuarioError || !usuarioData) {
+        throw new Error("No se encontró tu perfil en la tabla usuario");
       }
-
-      toast.success("¡Evento enviado! 🎉");
+  
+      // Paso 3: insertar el evento con id_usuario
+      const { error: insertError } = await supabase
+        .from("evento")
+        .insert([{ ...data, id_usuario: usuarioData.id_usuario }]);
+  
+      if (insertError) throw new Error(insertError.message);
+  
+      toast.success("¡Evento fue creado con éxito! 🎉");
       setSent(true);
     } catch (err) {
-      toast.error((err as Error).message ?? "Ups, algo salió mal");
+      toast.error((err as Error).message ?? "Error inesperado");
     } finally {
       setLoadingStep(false);
     }
@@ -343,6 +367,7 @@ function EventWizard() {
 /* =========================================================
  * Steps — sin genéricos ni children tipados raros
  * =======================================================*/
+
 function useSteps() {
   return [
     {
@@ -377,18 +402,21 @@ function useSteps() {
         </LocalCard>
       ),
     },
+    
     {
       icon: "👥",
       title: "Capacidad",
       content: (
-        <LocalCard title="Capacidad">
-          <RHFInput
-            name="capacidad"
-            type="number"
-            label="Capacidad esperada *"
-            placeholder="Ej: 800"
-          />
-        </LocalCard>
+<LocalCard title="Capacidad">
+<RHFSelect
+  name="capacidad"
+  label="Capacidad esperada *"
+  placeholder="Selecciona una opción"
+  options={["0 a 200", "201 a 500", "501 a 1000", "1001 a 2000", "Más de 2000"]}
+/>
+  
+
+</LocalCard>
       ),
     },
     {

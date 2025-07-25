@@ -3,7 +3,7 @@ import { useForm } from "react-hook-form";
 import { z } from "zod";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { supabase } from "@/lib/supabase";
-import useAuth from "@/auth/useAuth";
+import { useAuth } from "@/auth/AuthContext";
 
 const profileSchema = z.object({
   nombre: z.string().min(1, "El nombre es obligatorio"),

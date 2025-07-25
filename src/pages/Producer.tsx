@@ -141,7 +141,7 @@ function ProducerWizard() {
           TRABAJA <span className="text-[#8e2afc]">CON</span> NOSOTROS
         </h1>
         <p className="text-white/70">
-          Ingresa tu productora para trabajar empezar con GoUp
+          Ingresa tu productora para empezar con GoUp
         </p>
       </header>
       <EntityCard title="REGISTRO DE PRODUCTORA">
