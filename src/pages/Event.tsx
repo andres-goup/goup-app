@@ -259,14 +259,13 @@ function EventWizard() {
     try {
       setLoadingStep(true);
   
-      // Paso 1: obtener el usuario autenticado
+      // Paso 1: obtener usuario autenticado
       const {
         data: { user },
       } = await supabase.auth.getUser();
-  
       if (!user) throw new Error("No estás autenticado");
   
-      // Paso 2: buscar el usuario en la tabla 'usuario' usando auth_user_id
+      // Paso 2: obtener id_usuario
       const { data: usuarioData, error: usuarioError } = await supabase
         .from("usuario")
         .select("id_usuario")
@@ -277,14 +276,45 @@ function EventWizard() {
         throw new Error("No se encontró tu perfil en la tabla usuario");
       }
   
-      // Paso 3: insertar el evento con id_usuario
-      const { error: insertError } = await supabase
-        .from("evento")
-        .insert([{ ...data, id_usuario: usuarioData.id_usuario }]);
+      const id_usuario = usuarioData.id_usuario;
+  
+      // Paso 3: subir imágenes a Supabase Storage y obtener URLs
+      const uploadImage = async (
+        file: File | null,
+        folder: string
+      ): Promise<string | null> => {
+        if (!file) return null;
+  
+        const filePath = `${folder}/${Date.now()}_${file.name}`;
+        const { error: uploadError } = await supabase.storage
+          .from("evento") // ← nombre del bucket
+          .upload(filePath, file, {
+            cacheControl: "3600",
+            upsert: false,
+          });
+  
+        if (uploadError) throw new Error(`Error al subir ${folder}: ${uploadError.message}`);
+  
+        const { data } = supabase.storage.from("evento").getPublicUrl(filePath);
+        return data.publicUrl;
+      };
+  
+      const flyerUrl = await uploadImage(data.flyer, "flyer");
+      const imgSecUrl = await uploadImage(data.imgSec, "imgSec");
+  
+      // Paso 4: crear evento con URLs de imágenes
+      const { error: insertError } = await supabase.from("evento").insert([
+        {
+          ...data,
+          flyer: flyerUrl,
+          imgSec: imgSecUrl,
+          id_usuario,
+        },
+      ]);
   
       if (insertError) throw new Error(insertError.message);
   
-      toast.success("¡Evento fue creado con éxito! 🎉");
+      toast.success("¡Evento creado con éxito!");
       setSent(true);
     } catch (err) {
       toast.error((err as Error).message ?? "Error inesperado");
