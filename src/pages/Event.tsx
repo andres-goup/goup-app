@@ -18,8 +18,7 @@ import logo from "@/assets/goup_logo.png"
 import { eventSchema } from "@/lib/schemas"; // ⬅️ ajusta la ruta si es distinta
 import { useStepper } from "@/hooks/useStepper";
 import { supabase } from "@/lib/supabase";
-import { MenuItem, TextField } from "@mui/material";
-import { Controller} from "react-hook-form";
+import { useNavigate } from "react-router-dom";
 
 
 // **Solo estos controles compartidos** (son simples inputs, no genéricos en JSX)
@@ -234,9 +233,10 @@ function EventWizard() {
     ["flyer", "imgSec"], // 5
     [], // 6 - review
   ];
-
+  const navigate = useNavigate();
   const onSubmitStep = async () => {
-    setLoadingStep(true);
+   
+  
     const fields = stepFields[current];
     const ok = await methods.trigger(fields, { shouldFocus: true });
 
@@ -256,8 +256,11 @@ function EventWizard() {
   };
 
   const onSubmitFinal = async (data: EventFormValues) => {
-    try {
-      setLoadingStep(true);
+    
+    if (sent) return;
+
+  try {
+    setLoadingStep(true);
   
       // Paso 1: obtener usuario autenticado
       const {
@@ -316,6 +319,8 @@ function EventWizard() {
   
       toast.success("¡Evento creado con éxito!");
       setSent(true);
+      methods.reset(defaultEventValues);
+      setTimeout(() => navigate("/mis-eventos"), 2000);
     } catch (err) {
       toast.error((err as Error).message ?? "Error inesperado");
     } finally {
@@ -336,55 +341,57 @@ function EventWizard() {
       </header>
 
       <FormProvider {...methods}>
-        <form
-          onSubmit={methods.handleSubmit(onSubmitFinal)}
-          className="max-w-3xl mx-auto space-y-8 mt-8"
-          noValidate
-        >
-          <StepDots step={current} total={total} />
+  <form
+    onSubmit={(e) => {
+      e.preventDefault(); // evitar submit por Enter
+      if (current === total - 1) {
+        methods.handleSubmit(onSubmitFinal)();
+      } else {
+        onSubmitStep();
+      }
+    }}
+    onKeyDown={(e) => {
+      if (e.key === "Enter") e.preventDefault();
+    }}
+    className="max-w-3xl mx-auto space-y-8 mt-8"
+    noValidate
+  >
+    <StepDots step={current} total={total} />
+    <StepErrorBanner errors={stepErrors} />
 
-          <StepErrorBanner errors={stepErrors} />
+    <AnimatePresence mode="wait">
+      <motion.div
+        key={current}
+        initial={{ opacity: 0, x: 24 }}
+        animate={{ opacity: 1, x: 0 }}
+        exit={{ opacity: 0, x: -24 }}
+        transition={{ duration: 0.15 }}
+        className="space-y-6"
+      >
+        {steps[current].content}
+      </motion.div>
+    </AnimatePresence>
 
-          <AnimatePresence mode="wait">
-            <motion.div
-              key={current}
-              initial={{ opacity: 0, x: 24 }}
-              animate={{ opacity: 1, x: 0 }}
-              exit={{ opacity: 0, x: -24 }}
-              transition={{ duration: 0.15 }}
-              className="space-y-6"
-            >
-              {steps[current].content}
-            </motion.div>
-          </AnimatePresence>
+    <div className="flex justify-between pt-6">
+      {current > 0 ? (
+        <LoadingButton type="button" variant="outline" onClick={prev}>
+          Atrás
+        </LoadingButton>
+      ) : (
+        <span />
+      )}
 
-          <div className="flex justify-between pt-6">
-          {current > 0 ? (
-            <LoadingButton type="button" variant="outline" onClick={prev}>
-              Atrás
-            </LoadingButton>
-          ) : (
-            <span />
-          )}
+      <LoadingButton
+        type="submit"
+        loading={loadingStep}
+      >
+        {current === total - 1 ? "Enviar formulario" : "Siguiente"}
+      </LoadingButton>
+    </div>
+  </form>
+</FormProvider>
 
-          {current < total - 1 ? (
-            <LoadingButton
-              type="button"
-              loading={loadingStep}
-              onClick={onSubmitStep}
-            >
-              Siguiente
-            </LoadingButton>
-          ) : (
-            <LoadingButton type="submit" loading={loadingStep}>
-              Enviar formulario
-            </LoadingButton>
-          )}
-          </div>
-        </form>
-      </FormProvider>
-
-      <SuccessModal
+     <SuccessModal
         open={sent}
         title="¡Evento enviado!"
         subtitle="Nos pondremos en contacto contigo pronto."
