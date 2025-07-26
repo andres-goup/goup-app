@@ -81,6 +81,27 @@ export const eventSchema = z.object({
       .any()
       .nullable()
       .optional(),
+      edad: z
+  .string()
+  .transform((val) => parseInt(val, 10))
+  .refine((val) => val >= 18, {
+    message: "La edad mínima debe ser 18 años o más",
+  }),
+
+  
+      tieneVip: z.string().optional(),
+      vip: z.string().optional(),
+      reservas: z
+  .string()
+  .transform((val) => val === "Sí"),
+  tieneLineup: z
+  .string()
+  .transform((val) => val === "Sí"),
+  
+      cantidadDJs: z.string().optional(),
+      djs: z.array(z.string()).optional(),
+  dress_code: z.string({ required_error: "Debes seleccionar un código de vestimenta" }),
+      
   });
   export type EventData = z.infer<typeof eventSchema>;
   export type EventFormValues = z.infer<typeof eventSchema>;
