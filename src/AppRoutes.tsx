@@ -16,6 +16,7 @@ import Dashboard from "./pages/Inicio";
 import MisEventosPage from "./pages/mis-eventos";
 import EventDetailPage from "./pages/EventDetail";
 import MiClubPage from "./pages/mi-club";
+import ProducerCreatePage from "./pages/ProducerCreate";
 
 // (Opcional) Si no usas directamente UserEvents aquí, puedes borrar este import
 // import UserEvents from "./components/UserEvents";
@@ -47,6 +48,18 @@ export default function AppRoutes() {
             </RequireAuth>
           }
         />
+        <Route
+  path="productora/crear"
+  element={
+    <RequireAuth>
+      <RequireRole roles={["admin", "productor"]}>
+        <ProducerCreatePage />
+      </RequireRole>
+    </RequireAuth>
+  }
+/>
+
+
           <Route
           path="club/crear"
           element={

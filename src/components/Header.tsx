@@ -2,15 +2,18 @@
 import { useEffect, useRef, useState } from "react";
 import { Link, NavLink } from "react-router-dom";
 import { useAuth } from "@/auth/AuthContext";
-import { useHasClub } from "@/hooks/useHasClub"; // ⬅️ NUEVO
+import { useHasClub } from "@/hooks/useHasClub"; // club
+import { supabase } from "@/lib/supabase";       // productor
 
 export default function Header() {
   const { user, dbUser, signOut } = useAuth();
+
   const [open, setOpen] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
 
-  const { loading: loadingClub, hasClub } = useHasClub(); // ⬅️ NUEVO
+  const { loading: loadingClub, hasClub } = useHasClub();
+  const [hasProducer, setHasProducer] = useState<boolean>(false);
 
   const avatar =
     dbUser?.foto ||
@@ -24,10 +27,17 @@ export default function Header() {
     user?.email ||
     "Usuario";
 
-  const isAdmin = dbUser?.rol === "admin";
-  const isClubOwner = dbUser?.rol === "club_owner";
-  const isProductor = dbUser?.rol === "productor";
-  const canCreateEvent = !!dbUser?.can_create_event || isAdmin || isClubOwner || isProductor;
+  // === NUEVO: helper para dos roles (rol + rol_extra) ===
+  type Role = "admin" | "club_owner" | "productor" | "user";
+  const roleExtra = (dbUser as any)?.rol_extra as Role | undefined;
+  const hasRole = (r: Role) => dbUser?.rol === r || roleExtra === r;
+
+  // Reemplazo directo de flags usando hasRole
+  const isAdmin = hasRole("admin");
+  const isClubOwner = hasRole("club_owner");
+  const isProductor = hasRole("productor");
+  const canCreateEvent =
+    !!dbUser?.can_create_event || isAdmin || isClubOwner || isProductor;
 
   // Cerrar menú al hacer click fuera o al presionar ESC
   useEffect(() => {
@@ -47,6 +57,40 @@ export default function Header() {
     };
   }, [open]);
 
+  // 👇 ESTE useEffect debe ir ANTES de cualquier "return" condicional
+  // para no romper el orden de hooks
+  useEffect(() => {
+    let active = true;
+
+    (async () => {
+      if (!user) return;
+
+      // 1) id_usuario
+      const { data: u } = await supabase
+        .from("usuario")
+        .select("id_usuario")
+        .eq("auth_user_id", user.id)
+        .single();
+
+      if (!u) return;
+
+      // 2) ¿existe productora?
+      const { data: p } = await supabase
+        .from("productor")
+        .select("id_productor")
+        .eq("id_usuario", u.id_usuario)
+        .maybeSingle();
+
+      if (!active) return;
+      setHasProducer(!!p);
+    })();
+
+    return () => {
+      active = false;
+    };
+  }, [user]);
+
+  // Evitamos parpadeo del header mientras carga dbUser
   if (!dbUser && user) return null;
 
   return (
@@ -62,7 +106,7 @@ export default function Header() {
           <nav className="hidden md:flex items-center gap-4 ml-6 text-sm">
             <NavItem to="/">Inicio</NavItem>
 
-            {/* ⬇️ Mostrar "Crear club" si no tiene club; "Mi club" si ya tiene. */}
+            {/* Club: alterna Crear club / Mi club */}
             {(isClubOwner || isAdmin) && !loadingClub && (
               hasClub ? (
                 <NavItem to="/dashboard/mi-club">Mi club</NavItem>
@@ -71,11 +115,16 @@ export default function Header() {
               )
             )}
 
-            {(isProductor || isAdmin) && (
-              <NavItem to="/dashboard/productora">Mi productora</NavItem>
-            )}
+            {/* Productora: alterna Crear / Mi productora */}
+            {(isProductor || isAdmin) &&
+              (hasProducer ? (
+                <NavItem to="/dashboard/productora">Mi productora</NavItem>
+              ) : (
+                <NavItem to="/productora/crear">Crear productora</NavItem>
+              ))}
 
-            {(isProductor || isAdmin) || isClubOwner && (
+            {/* Mis eventos */}
+            {(isProductor || isAdmin || isClubOwner) && (
               <NavItem to="/mis-eventos">Mis eventos</NavItem>
             )}
 
@@ -132,7 +181,7 @@ export default function Header() {
                     <li>
                       <Link
                         to="/perfil"
-                        className="block px-3 py-2 hover:bg-white/5"
+                        className="block px-3 py-2 hover:bg:white/5"
                         onClick={() => setOpen(false)}
                       >
                         Mi perfil
@@ -142,7 +191,7 @@ export default function Header() {
                       <li>
                         <Link
                           to="/admin"
-                          className="block px-3 py-2 hover:bg-white/5"
+                          className="block px-3 py-2 hover:bg:white/5"
                           onClick={() => setOpen(false)}
                         >
                           Panel admin
@@ -151,7 +200,7 @@ export default function Header() {
                     )}
                     <li>
                       <button
-                        className="w-full text-left px-3 py-2 hover:bg-white/5"
+                        className="w-full text-left px-3 py-2 hover:bg:white/5"
                         onClick={() => {
                           setOpen(false);
                           signOut();
@@ -193,25 +242,30 @@ export default function Header() {
               Inicio
             </MobileNavItem>
 
-            {(isClubOwner || isAdmin) && (
-              
+            {/* Club (mobile): alterna */}
+            {(isClubOwner || isAdmin) && !loadingClub && (
+              hasClub ? (
                 <MobileNavItem to="/dashboard/mi-club" onClick={() => setMobileOpen(false)}>
                   Mi club
                 </MobileNavItem>
-               )}
-
-            {(isClubOwner|| isAdmin) && (   
+              ) : (
                 <MobileNavItem to="/club/crear" onClick={() => setMobileOpen(false)}>
                   Crear club
                 </MobileNavItem>
-             )}
-           
-
-            {(isProductor || isAdmin) && (
-              <MobileNavItem to="/dashboard/productora" onClick={() => setMobileOpen(false)}>
-                Mi productora
-              </MobileNavItem>
+              )
             )}
+
+            {/* Productora (mobile): alterna */}
+            {(isProductor || isAdmin) &&
+              (hasProducer ? (
+                <MobileNavItem to="/dashboard/productora" onClick={() => setMobileOpen(false)}>
+                  Mi productora
+                </MobileNavItem>
+              ) : (
+                <MobileNavItem to="/productora/crear" onClick={() => setMobileOpen(false)}>
+                  Crear productora
+                </MobileNavItem>
+              ))}
 
             {(isProductor || isAdmin || isClubOwner) && (
               <MobileNavItem to="/mis-eventos" onClick={() => setMobileOpen(false)}>
@@ -282,7 +336,9 @@ function MobileNavItem({
       to={to}
       onClick={onClick}
       className={({ isActive }) =>
-        `block px-3 py-2 rounded ${isActive ? "bg-[#8e2afc]/20 text-[#8e2afc]" : "text-white/80 hover:bg:white/5"}`
+        `block px-3 py-2 rounded ${
+          isActive ? "bg-[#8e2afc]/20 text-[#8e2afc]" : "text-white/80 hover:bg-white/5"
+        }`
       }
     >
       {children}
