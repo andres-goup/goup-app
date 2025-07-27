@@ -248,6 +248,7 @@ function ClubWizard() {
 
       const imagenUrl = await uploadImage(data.imagen as File | null, "imagen");
       const bannerUrl = await uploadImage(data.banner as File | null, "banner");
+      setTimeout(() => navigate("/dashboard/mi-club"), 1800);
       // Verificar si el usuario ya tiene un club
 // Verificar si el usuario ya tiene un club
 const { data: existingClub, error: existErr } = await supabase
@@ -265,7 +266,7 @@ if (existingClub) {
   // ya existe → no permitir crear otro
   toast.error("Ya tienes un club creado. Solo se permite uno por usuario.");
   // opcional: redirigir a Mi club
-  setTimeout(() => navigate("/dashboard/club"), 800);
+  setTimeout(() => navigate("/dashboard/mi-club"), 800);
   setLoadingStep(false);
   return;
 }

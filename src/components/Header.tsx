@@ -75,7 +75,7 @@ export default function Header() {
               <NavItem to="/dashboard/productora">Mi productora</NavItem>
             )}
 
-            {(isProductor || isAdmin) && (
+            {(isProductor || isAdmin) || isClubOwner && (
               <NavItem to="/mis-eventos">Mis eventos</NavItem>
             )}
 
@@ -200,7 +200,7 @@ export default function Header() {
                 </MobileNavItem>
                )}
 
-            {(isProductor || isAdmin) && (   
+            {(isClubOwner|| isAdmin) && (   
                 <MobileNavItem to="/club/crear" onClick={() => setMobileOpen(false)}>
                   Crear club
                 </MobileNavItem>
@@ -213,7 +213,7 @@ export default function Header() {
               </MobileNavItem>
             )}
 
-            {(isProductor || isAdmin) && (
+            {(isProductor || isAdmin || isClubOwner) && (
               <MobileNavItem to="/mis-eventos" onClick={() => setMobileOpen(false)}>
                 Mis eventos
               </MobileNavItem>
