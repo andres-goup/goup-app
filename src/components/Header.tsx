@@ -2,13 +2,15 @@
 import { useEffect, useRef, useState } from "react";
 import { Link, NavLink } from "react-router-dom";
 import { useAuth } from "@/auth/AuthContext";
+import { useHasClub } from "@/hooks/useHasClub"; // ⬅️ NUEVO
 
 export default function Header() {
   const { user, dbUser, signOut } = useAuth();
   const [open, setOpen] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
+  const containerRef = useRef<HTMLDivElement>(null);
 
-  const containerRef = useRef<HTMLDivElement>(null); // ⬅️ para click-outside
+  const { loading: loadingClub, hasClub } = useHasClub(); // ⬅️ NUEVO
 
   const avatar =
     dbUser?.foto ||
@@ -60,9 +62,23 @@ export default function Header() {
           <nav className="hidden md:flex items-center gap-4 ml-6 text-sm">
             <NavItem to="/">Inicio</NavItem>
 
-            {(isClubOwner || isAdmin) && <NavItem to="/dashboard/club">Mi club</NavItem>}
-            {(isProductor || isAdmin) && <NavItem to="/dashboard/productora">Mi productora</NavItem>}
-            {(isProductor || isAdmin) && <NavItem to="/mis-eventos">Mis eventos</NavItem>}
+            {/* ⬇️ Mostrar "Crear club" si no tiene club; "Mi club" si ya tiene. */}
+            {(isClubOwner || isAdmin) && !loadingClub && (
+              hasClub ? (
+                <NavItem to="/dashboard/mi-club">Mi club</NavItem>
+              ) : (
+                <NavItem to="/club/crear">Crear club</NavItem>
+              )
+            )}
+
+            {(isProductor || isAdmin) && (
+              <NavItem to="/dashboard/productora">Mi productora</NavItem>
+            )}
+
+            {(isProductor || isAdmin) && (
+              <NavItem to="/mis-eventos">Mis eventos</NavItem>
+            )}
+
             {canCreateEvent && <NavItem to="/evento/crear">Crear evento</NavItem>}
             {isAdmin && <NavItem to="/admin">Admin</NavItem>}
           </nav>
@@ -109,7 +125,7 @@ export default function Header() {
                 >
                   <div className="px-3 py-2 border-b border-white/10">
                     <p className="font-semibold truncate">{name}</p>
-                    <p className="text-white/60 truncate">{user.email}</p>
+                    <p className="text-white/60 truncate">{user?.email}</p>
                   </div>
 
                   <ul className="py-1">
@@ -178,10 +194,18 @@ export default function Header() {
             </MobileNavItem>
 
             {(isClubOwner || isAdmin) && (
-              <MobileNavItem to="/dashboard/club" onClick={() => setMobileOpen(false)}>
-                Mi club
-              </MobileNavItem>
-            )}
+              
+                <MobileNavItem to="/dashboard/mi-club" onClick={() => setMobileOpen(false)}>
+                  Mi club
+                </MobileNavItem>
+               )}
+
+            {(isProductor || isAdmin) && (   
+                <MobileNavItem to="/club/crear" onClick={() => setMobileOpen(false)}>
+                  Crear club
+                </MobileNavItem>
+             )}
+           
 
             {(isProductor || isAdmin) && (
               <MobileNavItem to="/dashboard/productora" onClick={() => setMobileOpen(false)}>
@@ -258,9 +282,7 @@ function MobileNavItem({
       to={to}
       onClick={onClick}
       className={({ isActive }) =>
-        `block px-3 py-2 rounded ${
-          isActive ? "bg-[#8e2afc]/20 text-[#8e2afc]" : "text-white/80 hover:bg-white/5"
-        }`
+        `block px-3 py-2 rounded ${isActive ? "bg-[#8e2afc]/20 text-[#8e2afc]" : "text-white/80 hover:bg:white/5"}`
       }
     >
       {children}
