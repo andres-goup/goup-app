@@ -1,6 +1,6 @@
 // src/pages/EventDetail.tsx
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { useParams, Link } from "react-router-dom";
+import { useParams, Link, useNavigate } from "react-router-dom";
 import { supabase } from "@/lib/supabase";
 import toast from "react-hot-toast";
 import { FormProvider, useForm } from "react-hook-form";
@@ -146,11 +146,15 @@ const timeRange = (start?: string | null, end?: string | null) => {
 
 export default function EventDetailPage() {
   const { id } = useParams<{ id: string }>();
+  const navigate = useNavigate();
+
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [deleting, setDeleting] = useState(false);
   const [eventData, setEventData] = useState<DBEvento | null>(null);
   const [editMode, setEditMode] = useState(false);
   const [confirmOpen, setConfirmOpen] = useState(false);
+  const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false);
   const originalValuesRef = useRef<EditForm | null>(null);
 
   const methods = useForm<EditForm>({
@@ -229,7 +233,7 @@ export default function EventDetailPage() {
   };
 
   /* =========================
-   * Acciones edición (sin cambios)
+   * Acciones edición
    * ========================= */
   const handleCancel = () => {
     if (originalValuesRef.current) {
@@ -237,7 +241,9 @@ export default function EventDetailPage() {
     }
     setEditMode(false);
   };
+
   const handleAskSave = () => setConfirmOpen(true);
+
   const onConfirmSave = methods.handleSubmit(async (values) => {
     try {
       setSaving(true);
@@ -311,6 +317,31 @@ export default function EventDetailPage() {
       setSaving(false);
     }
   });
+
+  // ======= ELIMINAR EVENTO =======
+  const askDelete = () => setConfirmDeleteOpen(true);
+
+  const onConfirmDelete = async () => {
+    if (!id) return;
+    try {
+      setDeleting(true);
+      const { error } = await supabase
+        .from("evento")
+        .delete()
+        .eq("id_evento", id);
+
+      if (error) throw new Error(error.message);
+
+      toast.success("Evento eliminado");
+      setConfirmDeleteOpen(false);
+      // Redirige a Mis eventos (ajusta si usas otra ruta)
+      navigate("/mis-eventos");
+    } catch (err: any) {
+      toast.error(err.message ?? "No se pudo eliminar el evento");
+    } finally {
+      setDeleting(false);
+    }
+  };
 
   if (loading) {
     return <div className="p-6 text-white">Cargando...</div>;
@@ -531,7 +562,7 @@ export default function EventDetailPage() {
           </div>
         )}
 
-        {/* ---------- EDICIÓN (sin cambios de lógica) ---------- */}
+        {/* ---------- EDICIÓN ---------- */}
         {editMode && (
           <FormProvider {...methods}>
             <form
@@ -542,6 +573,22 @@ export default function EventDetailPage() {
               className="space-y-6 mt-2"
               noValidate
             >
+              {/* ZONA PELIGROSA: Eliminar evento */}
+              <section className="rounded-xl border border-rose-500/30 bg-rose-500/10 p-4">
+                <h3 className="text-sm font-semibold text-rose-300 mb-1">Zona peligrosa</h3>
+                <p className="text-white/70 text-sm mb-3">
+                  Eliminar este evento es <b>irreversible</b>. Se borrarán sus datos y no hay vuelta atrás.
+                </p>
+                <button
+                  type="button"
+                  onClick={askDelete}
+                  disabled={deleting}
+                  className="px-4 py-2 rounded bg-rose-600 hover:bg-rose-500 text-white disabled:opacity-60"
+                >
+                  {deleting ? "Eliminando…" : "Eliminar evento"}
+                </button>
+              </section>
+
               <Section title="Información del Evento">
                 <RHFInput
                   name="nombre"
@@ -677,6 +724,34 @@ export default function EventDetailPage() {
                   onClick={() => onConfirmSave()}
                 >
                   Sí, guardar
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Modal de confirmación de borrado */}
+        {confirmDeleteOpen && (
+          <div className="fixed inset-0 z-50 grid place-items-center bg-black/70">
+            <div className="bg-neutral-900 rounded-md p-6 w-[92vw] max-w-md text-center border border-rose-500/30">
+              <h3 className="text-lg font-semibold text-rose-300 mb-2">¿Borrar este evento?</h3>
+              <p className="text-white/70 mb-5">
+                Esta acción es <b>permanente</b> y no hay vuelta atrás.
+              </p>
+              <div className="flex justify-center gap-3">
+                <button
+                  className="px-4 py-2 rounded border border-white/20 hover:bg-white/10"
+                  onClick={() => setConfirmDeleteOpen(false)}
+                  disabled={deleting}
+                >
+                  No, cancelar
+                </button>
+                <button
+                  className="px-4 py-2 rounded bg-rose-600 hover:bg-rose-500 disabled:opacity-60"
+                  onClick={onConfirmDelete}
+                  disabled={deleting}
+                >
+                  {deleting ? "Eliminando…" : "Sí, borrar"}
                 </button>
               </div>
             </div>

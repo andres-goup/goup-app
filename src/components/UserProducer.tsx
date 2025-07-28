@@ -17,6 +17,10 @@ type DBProductor = {
   imagen: string | null;
 };
 
+type State = { loading: boolean; hasProducer: boolean; producerId: string | null };
+
+
+
 const editSchema = z.object({
   nombre: z.string().min(1, "El nombre es obligatorio"),
   telefono: z.string().optional().or(z.literal("")),

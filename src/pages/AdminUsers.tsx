@@ -159,6 +159,10 @@ export default function AdminUsersPage() {
   // Selector de orden
   const [sortMode, setSortMode] = useState<SortMode>("none");
 
+  // Modal de eliminación
+  const [deleteTarget, setDeleteTarget] = useState<Row | null>(null);
+  const [deleting, setDeleting] = useState(false);
+
   // Carga inicial
   useEffect(() => {
     let mounted = true;
@@ -184,7 +188,7 @@ export default function AdminUsersPage() {
         )
         .order("created_at", { ascending: true });
 
-    if (!mounted) return;
+      if (!mounted) return;
 
       if (error) {
         console.error("load usuario:", error);
@@ -254,8 +258,8 @@ export default function AdminUsersPage() {
     if (found) markDirty({ ...found, can_create_event: can });
   };
 
-  /** Aprobar/Rechazar solicitud (UI) */
-  const onApprove = (id_usuario: string) => {
+  /** Confirmar (antes: Aprobar) */
+  const onConfirm = (id_usuario: string) => {
     setRows((prev) =>
       prev.map((r) => {
         if (r.id_usuario !== id_usuario) return r;
@@ -270,19 +274,40 @@ export default function AdminUsersPage() {
         return updated;
       })
     );
-    toast.success("Solicitud aprobada (recuerda Guardar cambios).");
+    toast.success("Solicitud confirmada (recuerda Guardar cambios).");
   };
 
-  const onReject = (id_usuario: string) => {
-    setRows((prev) =>
-      prev.map((r) => {
-        if (r.id_usuario !== id_usuario) return r;
-        const updated: Row = { ...r, solicitud_estado: "rechazada" };
-        markDirty(updated);
-        return updated;
-      })
-    );
-    toast("Solicitud rechazada (recuerda Guardar cambios).", { icon: "⚠️" });
+  /** Eliminar (antes: Rechazar) – sólo si no tiene roles elevados y es user */
+  const canDelete = (u: Row) =>
+    !hasElevatedRole(u) && u.rol === "user" && (u.rol_extra === null || u.rol_extra === "user");
+
+  const askDelete = (row: Row) => {
+    if (!canDelete(row)) {
+      toast.error("Solo puedes eliminar usuarios sin roles asignados (o con rol 'user').");
+      return;
+    }
+    setDeleteTarget(row);
+  };
+
+  const onConfirmDelete = async () => {
+    if (!deleteTarget) return;
+    try {
+      setDeleting(true);
+      const { error } = await supabase
+        .from("usuario")
+        .delete()
+        .eq("id_usuario", deleteTarget.id_usuario);
+
+      if (error) throw new Error(error.message);
+
+      setRows((prev) => prev.filter((r) => r.id_usuario !== deleteTarget.id_usuario));
+      setDeleteTarget(null);
+      toast.success("Usuario eliminado.");
+    } catch (e: any) {
+      toast.error(e?.message ?? "No se pudo eliminar el usuario");
+    } finally {
+      setDeleting(false);
+    }
   };
 
   /** Guardar cambios con AUTO-SYNC de estado aprobado si hay roles elevados */
@@ -346,14 +371,11 @@ export default function AdminUsersPage() {
     [rows]
   );
 
-  /** ORDENAMIENTO MEJORADO */
+  /** ORDENAMIENTO */
   const sortedRows = useMemo(() => {
     const copy = [...rows];
 
     if (sortMode === "pending-first") {
-      // 1) Pendiente arriba
-      // 2) Dentro de pendientes: fecha de envío DESC (más nuevas primero)
-      // 3) Empate: nombre ASC
       copy.sort((a, b) => {
         const ap = isPendingRow(a) ? 1 : 0;
         const bp = isPendingRow(b) ? 1 : 0;
@@ -370,7 +392,6 @@ export default function AdminUsersPage() {
         return an.localeCompare(bn);
       });
     } else if (sortMode === "approved-first") {
-      // Aprobados arriba; empate por nombre
       copy.sort((a, b) => {
         const aa = isApprovedRow(a) ? 1 : 0;
         const ba = isApprovedRow(b) ? 1 : 0;
@@ -380,7 +401,6 @@ export default function AdminUsersPage() {
         return an.localeCompare(bn);
       });
     } else {
-      // Sin orden especial: alfabético por nombre
       copy.sort((a, b) =>
         (a.nombre ?? "").toLowerCase().localeCompare((b.nombre ?? "").toLowerCase())
       );
@@ -569,15 +589,25 @@ export default function AdminUsersPage() {
                           <div className="flex items-center gap-2">
                             <button
                               className="px-3 py-1.5 rounded bg-emerald-600/90 hover:bg-emerald-600 text-white text-xs"
-                              onClick={() => onApprove(u.id_usuario)}
+                              onClick={() => onConfirm(u.id_usuario)}
                             >
-                              Aprobar
+                              Confirmar
                             </button>
                             <button
-                              className="px-3 py-1.5 rounded bg-rose-600/90 hover:bg-rose-600 text-white text-xs"
-                              onClick={() => onReject(u.id_usuario)}
+                              className={`px-3 py-1.5 rounded text-white text-xs ${
+                                canDelete(u)
+                                  ? "bg-rose-600/90 hover:bg-rose-600"
+                                  : "bg-zinc-700 cursor-not-allowed"
+                              }`}
+                              disabled={!canDelete(u)}
+                              onClick={() => askDelete(u)}
+                              title={
+                                canDelete(u)
+                                  ? "Eliminar usuario"
+                                  : "Solo puedes eliminar usuarios sin roles (o con rol 'user')"
+                              }
                             >
-                              Rechazar
+                              Eliminar
                             </button>
                           </div>
                         )}
@@ -594,6 +624,34 @@ export default function AdminUsersPage() {
           <p className="text-xs text-zinc-400">Tienes cambios sin guardar.</p>
         )}
       </div>
+
+      {/* Modal eliminar usuario */}
+      {deleteTarget && (
+        <div className="fixed inset-0 z-50 grid place-items-center bg-black/70">
+          <div className="bg-neutral-900 rounded-md p-6 w-[92vw] max-w-md text-center border border-rose-500/30">
+            <h3 className="text-lg font-semibold text-rose-300 mb-2">¿Eliminar este usuario?</h3>
+            <p className="text-white/70 mb-5">
+              Esta acción es <b>permanente</b> y no hay vuelta atrás.
+            </p>
+            <div className="flex justify-center gap-3">
+              <button
+                className="px-4 py-2 rounded border border-white/20 hover:bg-white/10"
+                onClick={() => setDeleteTarget(null)}
+                disabled={deleting}
+              >
+                No, cancelar
+              </button>
+              <button
+                className="px-4 py-2 rounded bg-rose-600 hover:bg-rose-500 disabled:opacity-60"
+                onClick={onConfirmDelete}
+                disabled={deleting}
+              >
+                {deleting ? "Eliminando…" : "Sí, borrar"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </main>
   );
 }

@@ -4,10 +4,6 @@ import { Link, NavLink } from "react-router-dom";
 import { useAuth } from "@/auth/AuthContext";
 import { useHasClub } from "@/hooks/useHasClub"; // club
 import { supabase } from "@/lib/supabase";       // productor
-import { toast } from "react-hot-toast";
-
-type Role = "admin" | "club_owner" | "productor" | "user";
-type RequestStatus = "pendiente" | "aprobada" | "rechazada" | null;
 
 export default function Header() {
   const { user, dbUser, signOut } = useAuth();
@@ -19,36 +15,9 @@ export default function Header() {
   const { loading: loadingClub, hasClub } = useHasClub();
   const [hasProducer, setHasProducer] = useState<boolean>(false);
 
-  // Estado de solicitud (NUEVO)
-  const [requestStatus, setRequestStatus] = useState<RequestStatus>(null);
-  const [requestSent, setRequestSent] = useState<boolean>(false);
-
-  // Helper 2-roles (rol + rol_extra)
-  const roleExtra = (dbUser as any)?.rol_extra as Role | undefined;
-  const hasRole = (r: Role) => dbUser?.rol === r || roleExtra === r;
-
-  const isAdmin = hasRole("admin");
-  const isClubOwner = hasRole("club_owner");
-  const isProductor = hasRole("productor");
-
-  const isRequestApproved = requestStatus === "aprobada";
-  const shouldShowRoleRequest =
-    !!user && !isAdmin && !isClubOwner && !isProductor && !requestSent;
-  const shouldShowRequestStatus =
-    !!user &&
-    !isAdmin &&
-    !isClubOwner &&
-    !isProductor &&
-    requestSent &&
-    !isRequestApproved;
-
-  // Si la solicitud fue aprobada, habilitamos crear evento y mostrar mis eventos
-  const canCreateEvent =
-    !!dbUser?.can_create_event ||
-    isAdmin ||
-    isClubOwner ||
-    isProductor ||
-    isRequestApproved;
+  // Estado de solicitud (para alternar "Solicitud de acceso" / "Estado de solicitud")
+  const [solicitudEstado, setSolicitudEstado] = useState<string | null>(null);
+  const [solicitudEnviadaAt, setSolicitudEnviadaAt] = useState<string | null>(null);
 
   const avatar =
     dbUser?.foto ||
@@ -62,7 +31,29 @@ export default function Header() {
     user?.email ||
     "Usuario";
 
-  // Cerrar menú al hacer click fuera o al presionar ESC
+  type Role = "admin" | "club_owner" | "productor" | "user";
+  const roleExtra = (dbUser as any)?.rol_extra as Role | undefined;
+  const hasRole = (r: Role) => dbUser?.rol === r || roleExtra === r;
+
+  const isAdmin = hasRole("admin");
+  const isClubOwner = hasRole("club_owner");
+  const isProductor = hasRole("productor");
+  const canCreateEvent =
+    !!dbUser?.can_create_event || isAdmin || isClubOwner || isProductor;
+
+  // Mostrar "Solicitud de acceso" si NO tiene roles elevados y NO ha enviado solicitud.
+  const shouldShowRoleRequest =
+    !!user &&
+    !isAdmin &&
+    !isClubOwner &&
+    !isProductor &&
+    !solicitudEnviadaAt;
+
+  // Mostrar "Estado de solicitud" si envió solicitud y aún no tiene roles elevados
+  const shouldShowRoleStatus =
+    !!user && !isAdmin && !isClubOwner && !isProductor && !!solicitudEnviadaAt;
+
+  // Cerrar menús en click afuera o ESC
   useEffect(() => {
     function onDocClick(e: MouseEvent) {
       if (!open) return;
@@ -70,7 +61,10 @@ export default function Header() {
       if (!containerRef.current.contains(e.target as Node)) setOpen(false);
     }
     function onEsc(e: KeyboardEvent) {
-      if (e.key === "Escape") setOpen(false);
+      if (e.key === "Escape") {
+        setOpen(false);
+        setMobileOpen(false);
+      }
     }
     document.addEventListener("mousedown", onDocClick);
     document.addEventListener("keydown", onEsc);
@@ -80,64 +74,38 @@ export default function Header() {
     };
   }, [open]);
 
-  // Cargas: id_usuario, estado solicitud y existencia de productora
+  // Carga id_usuario + solicitud y existencia de productora
   useEffect(() => {
     let active = true;
     (async () => {
       if (!user) return;
 
-      // 1) Traer datos del usuario (id_usuario + solicitud_* que necesitamos)
       const { data: u } = await supabase
         .from("usuario")
-        .select("id_usuario, solicitud_estado, solicitud_enviada")
+        .select("id_usuario, solicitud_estado, solicitud_enviada_at")
         .eq("auth_user_id", user.id)
+        .single();
+
+      if (!active || !u) return;
+
+      setSolicitudEstado(u.solicitud_estado ?? null);
+      setSolicitudEnviadaAt(u.solicitud_enviada_at ?? null);
+
+      const { data: p } = await supabase
+        .from("productor")
+        .select("id_productor")
+        .eq("id_usuario", u.id_usuario)
         .maybeSingle();
 
-      if (u && active) {
-        const sent =
-          typeof u.solicitud_enviada === "string"
-            ? !!u.solicitud_enviada
-            : !!u.solicitud_enviada;
-        setRequestSent(sent);
-        setRequestStatus((u.solicitud_estado as RequestStatus) ?? null);
-
-        // 2) ¿existe productora?
-        const { data: p } = await supabase
-          .from("productor")
-          .select("id_productor")
-          .eq("id_usuario", u.id_usuario)
-          .maybeSingle();
-        if (!active) return;
-        setHasProducer(!!p);
-      }
+      if (!active) return;
+      setHasProducer(!!p);
     })();
     return () => {
       active = false;
     };
   }, [user]);
 
-  // --- NUEVO: Toast de “Acceso aprobado” (se muestra una sola vez por usuario) ---
-  useEffect(() => {
-    if (!user) return;
-    if (requestStatus !== "aprobada") return;
-    try {
-      const key = `goup_approval_toasted_${user.id}`;
-      const alreadyShown = typeof window !== "undefined" ? localStorage.getItem(key) : "1";
-      if (!alreadyShown) {
-        toast.success("¡Tu solicitud fue aprobada! Ya puedes crear eventos.", {
-          id: "approval-toast",
-        });
-        localStorage.setItem(key, "1");
-      }
-    } catch {
-      // si localStorage no está disponible, solo mostrar el toast
-      toast.success("¡Tu solicitud fue aprobada! Ya puedes crear eventos.", {
-        id: "approval-toast",
-      });
-    }
-  }, [user, requestStatus]);
-
-  // Evitamos parpadeo del header mientras carga dbUser
+  // Evitar parpadeo mientras carga dbUser
   if (!dbUser && user) return null;
 
   return (
@@ -170,16 +138,16 @@ export default function Header() {
                 <NavItem to="/productora/crear">Crear productora</NavItem>
               ))}
 
-            {/* Solicitud */}
+            {/* Solicitud acceso / Estado solicitud */}
             {shouldShowRoleRequest && (
               <NavItem to="/solicitud-acceso">Solicitud de acceso</NavItem>
             )}
-            {shouldShowRequestStatus && (
+            {shouldShowRoleStatus && (
               <NavItem to="/solicitud-estado">Estado de solicitud</NavItem>
             )}
 
             {/* Mis eventos */}
-            {(isProductor || isAdmin || isClubOwner || isRequestApproved) && (
+            {(isProductor || isAdmin || isClubOwner) && (
               <NavItem to="/mis-eventos">Mis eventos</NavItem>
             )}
 
@@ -202,7 +170,7 @@ export default function Header() {
           {user && (
             <div className="relative" ref={containerRef}>
               <button
-                aria-label="Abrir menú de usuario"
+                aria-label={open ? "Cerrar menú de usuario" : "Abrir menú de usuario"}
                 aria-haspopup="menu"
                 aria-expanded={open}
                 onClick={() => setOpen((o) => !o)}
@@ -228,19 +196,8 @@ export default function Header() {
                   className="absolute right-0 mt-2 z-[70] w-56 rounded-md bg-neutral-900 border border-white/10 shadow-lg text-sm text-white"
                 >
                   <div className="px-3 py-2 border-b border-white/10">
-                    <div className="flex items-center justify-between gap-2">
-                      <div className="min-w-0">
-                        <p className="font-semibold truncate">{name}</p>
-                        <p className="text-white/60 truncate">{user?.email}</p>
-                      </div>
-
-                      {/* --- Badge de Aprobado (NUEVO) --- */}
-                      {isRequestApproved && (
-                        <span className="shrink-0 inline-flex items-center rounded-full border border-emerald-400/40 bg-emerald-500/15 px-2 py-0.5 text-[10px] font-medium text-emerald-300">
-                          Acceso aprobado
-                        </span>
-                      )}
-                    </div>
+                    <p className="font-semibold truncate">{name}</p>
+                    <p className="text-white/60 truncate">{user?.email}</p>
                   </div>
 
                   <ul className="py-1">
@@ -290,12 +247,15 @@ export default function Header() {
             </Link>
           )}
 
+          {/* Botón móvil ☰ Menú  / ✕ Cerrar */}
           <button
-            className="md:hidden text-white text-2xl px-2"
+            className="md:hidden text-white px-2 py-1.5 inline-flex items-center gap-2 border border-white/10 rounded-md"
             onClick={() => setMobileOpen((m) => !m)}
-            aria-label="Abrir menú"
+            aria-label={mobileOpen ? "Cerrar menú" : "Abrir menú"}
+            aria-expanded={mobileOpen}
           >
-            ☰
+            <span className="text-2xl leading-none">{mobileOpen ? "✕" : "☰"}</span>
+            <span className="text-sm">{mobileOpen ? "Cerrar" : "Menú"}</span>
           </button>
         </div>
       </div>
@@ -333,19 +293,19 @@ export default function Header() {
                 </MobileNavItem>
               ))}
 
-            {/* Solicitud */}
+            {/* Solicitud / Estado */}
             {shouldShowRoleRequest && (
               <MobileNavItem to="/solicitud-acceso" onClick={() => setMobileOpen(false)}>
                 Solicitud de acceso
               </MobileNavItem>
             )}
-            {shouldShowRequestStatus && (
+            {shouldShowRoleStatus && (
               <MobileNavItem to="/solicitud-estado" onClick={() => setMobileOpen(false)}>
                 Estado de solicitud
               </MobileNavItem>
             )}
 
-            {(isProductor || isAdmin || isClubOwner || isRequestApproved) && (
+            {(isProductor || isAdmin || isClubOwner) && (
               <MobileNavItem to="/mis-eventos" onClick={() => setMobileOpen(false)}>
                 Mis eventos
               </MobileNavItem>

@@ -1,3 +1,4 @@
+// src/pages/UserClub.tsx
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { supabase } from "@/lib/supabase";
@@ -86,6 +87,17 @@ type EditForm = z.infer<typeof editSchema>;
 /* =========================
  * UI helpers
  * ========================= */
+
+/** Botones consistentes con el resto de la app */
+const BTN_PRIMARY =
+  "inline-flex items-center justify-center rounded-md bg-[#8e2afc] hover:bg-[#7b1fe0] px-4 py-2 text-sm font-semibold disabled:opacity-60 transition " +
+  "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#8e2afc]/60 focus-visible:ring-offset-2 focus-visible:ring-offset-black";
+const BTN_SECONDARY =
+  "inline-flex items-center justify-center px-4 py-2 rounded border border-white/20 hover:bg-white/10 text-sm font-semibold " +
+  "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/30 focus-visible:ring-offset-2 focus-visible:ring-offset-black";
+const BTN_GHOST =
+  "px-4 py-2 rounded border border-white/20 hover:bg-white/10 transition";
+
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <section className="space-y-4">
@@ -297,12 +309,14 @@ export default function UserClub() {
     return (
       <div className="text-white/80 panel">
         <p className="mb-4">Aún no has creado tu club.</p>
-        <Link to="/club/crear" className="btn-primary inline-flex items-center justify-center">
+        <Link to="/club/crear" className={BTN_PRIMARY}>
           Crear club
         </Link>
       </div>
     );
   }
+
+  const backHref = "/mis-eventos";
 
   return (
     <div className="text-white">
@@ -322,9 +336,9 @@ export default function UserClub() {
           <div className="absolute inset-0 bg-gradient-to-br from-[#25123e] via-[#381a63] to-[#8e2afc]" />
         )}
 
-        {/* Avatar flotante */}
-        <div className="absolute bottom-4 left-4 md:bottom-6 md:left-6 flex items-end gap-4">
-          <div className="h-20 w-20 md:h-24 md:w-24 rounded-full overflow-hidden border-4 border-[#8e2afc]">
+        {/* Avatar flotante (por encima de todo) */}
+        <div className="absolute bottom-4 left-4 md:bottom-6 md:left-6 flex items-end gap-4 z-20">
+          <div className="h-20 w-20 md:h-24 md:w-24 rounded-full overflow-hidden border-4 border-[#8e2afc] shadow-lg">
             {club.imagen ? (
               <img src={club.imagen} alt="Avatar del club" className="w-full h-full object-cover" />
             ) : (
@@ -345,6 +359,18 @@ export default function UserClub() {
 
       {/* ---------- CONTENIDO ---------- */}
       <div className="max-w-6xl mx-auto px-4 py-6">
+        {/* Acciones superiores */}
+        {!editMode && (
+          <div className="mb-6 flex items-center justify-between">
+            <Link to={backHref} className={BTN_SECONDARY}>
+              ← Ir a Mis Eventos
+            </Link>
+            <button type="button" onClick={() => setEditMode(true)} className={BTN_PRIMARY}>
+              Editar club
+            </button>
+          </div>
+        )}
+
         {!editMode && (
           <div className="grid lg:grid-cols-3 gap-6">
             {/* Principal */}
@@ -360,16 +386,16 @@ export default function UserClub() {
               {/* Servicios */}
               <section className="panel">
                 <h2 className="section-title mb-2">Servicios</h2>
-                <div className="flex flex-wrap gap-2">
-                  {club.accesibilidad && <span className="chip">Accesibilidad</span>}
-                  {club.estacionamiento && <span className="chip">Estacionamiento</span>}
-                  {club.guardarropia && <span className="chip">Guardarropía</span>}
-                  {club.terraza && <span className="chip">Terraza</span>}
-                  {club.fumadores && <span className="chip">Zona fumadores</span>}
-                  {club.wi_fi && <span className="chip">Wi-Fi</span>}
+                <div className="flex flex-wrap gap-2 mt-2">
+                  {club.accesibilidad && <span className="text-xs px-2 py-1 rounded bg-[#8e2afc]/20 text-[#cbb3ff] border border-[#8e2afc]/30">Accesibilidad</span>}
+                  {club.estacionamiento && <span className="text-xs px-2 py-1 rounded bg-[#8e2afc]/20 text-[#cbb3ff] border border-[#8e2afc]/30">Estacionamiento</span>}
+                  {club.guardarropia && <span className="text-xs px-2 py-1 rounded bg-[#8e2afc]/20 text-[#cbb3ff] border border-[#8e2afc]/30">Guardarropía</span>}
+                  {club.terraza && <span className="text-xs px-2 py-1 rounded bg-[#8e2afc]/20 text-[#cbb3ff] border border-[#8e2afc]/30">Terraza</span>}
+                  {club.fumadores && <span className="text-xs px-2 py-1 rounded bg-[#8e2afc]/20 text-[#cbb3ff] border border-[#8e2afc]/30">Zona fumadores</span>}
+                  {club.wi_fi && <span className="text-xs px-2 py-1 rounded bg-[#8e2afc]/20 text-[#cbb3ff] border border-[#8e2afc]/30">Wi-Fi</span>}
                   {!club.accesibilidad && !club.estacionamiento && !club.guardarropia &&
                    !club.terraza && !club.fumadores && !club.wi_fi && (
-                    <span className="text-sm text-white/60">No se registraron servicios.</span>
+                    <span className="text-xs px-2 py-1 rounded bg-[#8e2afc]/20 text-[#cbb3ff] border border-[#8e2afc]/30">No se registraron servicios.</span>
                   )}
                 </div>
               </section>
@@ -403,24 +429,13 @@ export default function UserClub() {
                         className="w-full aspect-[4/3] md:aspect-[16/10] object-cover"
                       />
                     ) : (
-                      <div className="w-full h-64 grid place-items-center text-white/40 bg-white/5">
+                      <div className="w-full h-64 grid place-items-center text-white/40 bg-white/5" >
                         Sin banner
                       </div>
                     )}
                   </figure>
                 </div>
               </section>
-
-              {/* Botón Editar */}
-              <div className="pt-2">
-                <button
-                  type="button"
-                  onClick={() => setEditMode(true)}
-                  className="btn-primary"
-                >
-                  Editar datos
-                </button>
-              </div>
             </div>
 
             {/* Lateral */}
@@ -467,6 +482,12 @@ export default function UserClub() {
               className="space-y-6 mt-2"
               noValidate
             >
+              <div className="mb-2 flex items-center justify-between">
+                <Link to={backHref} className={BTN_SECONDARY}>
+                  ← Volver a Mi club
+                </Link>
+              </div>
+
               <Section title="Identidad">
                 <RHFInput name="nombre" label="Nombre del club *" placeholder="Ej: Club Eclipse" />
                 <RHFTextarea name="descripcion" label="Descripción" rows={4} placeholder="Describe el concepto del club…" />
@@ -531,10 +552,10 @@ export default function UserClub() {
 
               {/* Toolbar sticky (acciones) */}
               <div className="sticky bottom-0 left-0 right-0 z-40 border-t border-white/10 bg-black/60 backdrop-blur px-4 py-3 flex gap-3 justify-end">
-                <button type="button" onClick={handleCancel} className="btn-ghost">
+                <button type="button" onClick={handleCancel} className={BTN_SECONDARY}>
                   Cancelar
                 </button>
-                <button type="submit" disabled={saving} className="btn-primary">
+                <button type="submit" disabled={saving} className={BTN_PRIMARY}>
                   Guardar cambios
                 </button>
               </div>
@@ -549,10 +570,10 @@ export default function UserClub() {
               <h3 className="text-lg font-semibold mb-1">¿Guardar los cambios?</h3>
               <p className="text-white/70 mb-5">Se actualizarán los datos del club.</p>
               <div className="flex justify-center gap-3">
-                <button className="btn-ghost" onClick={() => setConfirmOpen(false)}>
+                <button className={BTN_SECONDARY} onClick={() => setConfirmOpen(false)}>
                   No
                 </button>
-                <button className="btn-primary" disabled={saving} onClick={() => onConfirmSave()}>
+                <button className={BTN_PRIMARY} disabled={saving} onClick={() => onConfirmSave()}>
                   Sí, guardar
                 </button>
               </div>
