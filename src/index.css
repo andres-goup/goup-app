@@ -7,10 +7,3 @@ html, body, #root {
   background: #000;
   color: #fff;
 }
-@layer components {
-  .panel { @apply rounded-xl border border-white/10 bg-white/[0.03] backdrop-blur p-5; }
-  .chip { @apply text-xs px-2 py-1 rounded bg-[#8e2afc]/20 text-[#e4d7ff] border border-[#8e2afc]/30; }
-  .btn-primary { @apply px-4 py-2 rounded-md bg-[#8e2afc] hover:bg-[#7b1fe0] transition disabled:opacity-60; }
-  .btn-ghost { @apply px-4 py-2 rounded border border-white/20 hover:bg-white/10; }
-  .section-title { @apply text-xl font-bold text-[#cbb3ff]; }
-}

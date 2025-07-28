@@ -17,9 +17,9 @@ import MisEventosPage from "./pages/mis-eventos";
 import EventDetailPage from "./pages/EventDetail";
 import MiClubPage from "./pages/mi-club";
 import ProducerCreatePage from "./pages/ProducerCreate";
+import RoleRequestPage from "./pages/RoleRequestPage";
+import RoleRequestStatusPage from "@/pages/RoleRequestStatusPage";
 
-// (Opcional) Si no usas directamente UserEvents aquí, puedes borrar este import
-// import UserEvents from "./components/UserEvents";
 
 export default function AppRoutes() {
   return (
@@ -48,14 +48,26 @@ export default function AppRoutes() {
             </RequireAuth>
           }
         />
+        <Route path="/solicitud-estado" element={<RoleRequestStatusPage />} />
+              <Route
+          path="/solicitud-acceso"
+          element={
+            <RequireRole roles={["user", "productor", "club_owner", "admin"]}>
+              <RoleRequestPage />
+            </RequireRole>
+          }
+        />
+
+
+
         <Route
-  path="productora/crear"
-  element={
-    <RequireAuth>
-      <RequireRole roles={["admin", "productor"]}>
-        <ProducerCreatePage />
-      </RequireRole>
-    </RequireAuth>
+        path="productora/crear"
+        element={
+         <RequireAuth>
+           <RequireRole roles={["admin", "productor"]}>
+              <ProducerCreatePage />
+            </RequireRole>
+        </RequireAuth>
   }
 />
 

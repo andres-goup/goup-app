@@ -4,6 +4,10 @@ import { Link, NavLink } from "react-router-dom";
 import { useAuth } from "@/auth/AuthContext";
 import { useHasClub } from "@/hooks/useHasClub"; // club
 import { supabase } from "@/lib/supabase";       // productor
+import { toast } from "react-hot-toast";
+
+type Role = "admin" | "club_owner" | "productor" | "user";
+type RequestStatus = "pendiente" | "aprobada" | "rechazada" | null;
 
 export default function Header() {
   const { user, dbUser, signOut } = useAuth();
@@ -14,6 +18,37 @@ export default function Header() {
 
   const { loading: loadingClub, hasClub } = useHasClub();
   const [hasProducer, setHasProducer] = useState<boolean>(false);
+
+  // Estado de solicitud (NUEVO)
+  const [requestStatus, setRequestStatus] = useState<RequestStatus>(null);
+  const [requestSent, setRequestSent] = useState<boolean>(false);
+
+  // Helper 2-roles (rol + rol_extra)
+  const roleExtra = (dbUser as any)?.rol_extra as Role | undefined;
+  const hasRole = (r: Role) => dbUser?.rol === r || roleExtra === r;
+
+  const isAdmin = hasRole("admin");
+  const isClubOwner = hasRole("club_owner");
+  const isProductor = hasRole("productor");
+
+  const isRequestApproved = requestStatus === "aprobada";
+  const shouldShowRoleRequest =
+    !!user && !isAdmin && !isClubOwner && !isProductor && !requestSent;
+  const shouldShowRequestStatus =
+    !!user &&
+    !isAdmin &&
+    !isClubOwner &&
+    !isProductor &&
+    requestSent &&
+    !isRequestApproved;
+
+  // Si la solicitud fue aprobada, habilitamos crear evento y mostrar mis eventos
+  const canCreateEvent =
+    !!dbUser?.can_create_event ||
+    isAdmin ||
+    isClubOwner ||
+    isProductor ||
+    isRequestApproved;
 
   const avatar =
     dbUser?.foto ||
@@ -26,18 +61,6 @@ export default function Header() {
     (user?.user_metadata?.full_name as string | undefined) ||
     user?.email ||
     "Usuario";
-
-  // === NUEVO: helper para dos roles (rol + rol_extra) ===
-  type Role = "admin" | "club_owner" | "productor" | "user";
-  const roleExtra = (dbUser as any)?.rol_extra as Role | undefined;
-  const hasRole = (r: Role) => dbUser?.rol === r || roleExtra === r;
-
-  // Reemplazo directo de flags usando hasRole
-  const isAdmin = hasRole("admin");
-  const isClubOwner = hasRole("club_owner");
-  const isProductor = hasRole("productor");
-  const canCreateEvent =
-    !!dbUser?.can_create_event || isAdmin || isClubOwner || isProductor;
 
   // Cerrar menú al hacer click fuera o al presionar ESC
   useEffect(() => {
@@ -57,38 +80,62 @@ export default function Header() {
     };
   }, [open]);
 
-  // 👇 ESTE useEffect debe ir ANTES de cualquier "return" condicional
-  // para no romper el orden de hooks
+  // Cargas: id_usuario, estado solicitud y existencia de productora
   useEffect(() => {
     let active = true;
-
     (async () => {
       if (!user) return;
 
-      // 1) id_usuario
+      // 1) Traer datos del usuario (id_usuario + solicitud_* que necesitamos)
       const { data: u } = await supabase
         .from("usuario")
-        .select("id_usuario")
+        .select("id_usuario, solicitud_estado, solicitud_enviada")
         .eq("auth_user_id", user.id)
-        .single();
-
-      if (!u) return;
-
-      // 2) ¿existe productora?
-      const { data: p } = await supabase
-        .from("productor")
-        .select("id_productor")
-        .eq("id_usuario", u.id_usuario)
         .maybeSingle();
 
-      if (!active) return;
-      setHasProducer(!!p);
-    })();
+      if (u && active) {
+        const sent =
+          typeof u.solicitud_enviada === "string"
+            ? !!u.solicitud_enviada
+            : !!u.solicitud_enviada;
+        setRequestSent(sent);
+        setRequestStatus((u.solicitud_estado as RequestStatus) ?? null);
 
+        // 2) ¿existe productora?
+        const { data: p } = await supabase
+          .from("productor")
+          .select("id_productor")
+          .eq("id_usuario", u.id_usuario)
+          .maybeSingle();
+        if (!active) return;
+        setHasProducer(!!p);
+      }
+    })();
     return () => {
       active = false;
     };
   }, [user]);
+
+  // --- NUEVO: Toast de “Acceso aprobado” (se muestra una sola vez por usuario) ---
+  useEffect(() => {
+    if (!user) return;
+    if (requestStatus !== "aprobada") return;
+    try {
+      const key = `goup_approval_toasted_${user.id}`;
+      const alreadyShown = typeof window !== "undefined" ? localStorage.getItem(key) : "1";
+      if (!alreadyShown) {
+        toast.success("¡Tu solicitud fue aprobada! Ya puedes crear eventos.", {
+          id: "approval-toast",
+        });
+        localStorage.setItem(key, "1");
+      }
+    } catch {
+      // si localStorage no está disponible, solo mostrar el toast
+      toast.success("¡Tu solicitud fue aprobada! Ya puedes crear eventos.", {
+        id: "approval-toast",
+      });
+    }
+  }, [user, requestStatus]);
 
   // Evitamos parpadeo del header mientras carga dbUser
   if (!dbUser && user) return null;
@@ -123,8 +170,16 @@ export default function Header() {
                 <NavItem to="/productora/crear">Crear productora</NavItem>
               ))}
 
+            {/* Solicitud */}
+            {shouldShowRoleRequest && (
+              <NavItem to="/solicitud-acceso">Solicitud de acceso</NavItem>
+            )}
+            {shouldShowRequestStatus && (
+              <NavItem to="/solicitud-estado">Estado de solicitud</NavItem>
+            )}
+
             {/* Mis eventos */}
-            {(isProductor || isAdmin || isClubOwner) && (
+            {(isProductor || isAdmin || isClubOwner || isRequestApproved) && (
               <NavItem to="/mis-eventos">Mis eventos</NavItem>
             )}
 
@@ -173,15 +228,26 @@ export default function Header() {
                   className="absolute right-0 mt-2 z-[70] w-56 rounded-md bg-neutral-900 border border-white/10 shadow-lg text-sm text-white"
                 >
                   <div className="px-3 py-2 border-b border-white/10">
-                    <p className="font-semibold truncate">{name}</p>
-                    <p className="text-white/60 truncate">{user?.email}</p>
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="min-w-0">
+                        <p className="font-semibold truncate">{name}</p>
+                        <p className="text-white/60 truncate">{user?.email}</p>
+                      </div>
+
+                      {/* --- Badge de Aprobado (NUEVO) --- */}
+                      {isRequestApproved && (
+                        <span className="shrink-0 inline-flex items-center rounded-full border border-emerald-400/40 bg-emerald-500/15 px-2 py-0.5 text-[10px] font-medium text-emerald-300">
+                          Acceso aprobado
+                        </span>
+                      )}
+                    </div>
                   </div>
 
                   <ul className="py-1">
                     <li>
                       <Link
                         to="/perfil"
-                        className="block px-3 py-2 hover:bg:white/5"
+                        className="block px-3 py-2 hover:bg-white/5"
                         onClick={() => setOpen(false)}
                       >
                         Mi perfil
@@ -191,7 +257,7 @@ export default function Header() {
                       <li>
                         <Link
                           to="/admin"
-                          className="block px-3 py-2 hover:bg:white/5"
+                          className="block px-3 py-2 hover:bg-white/5"
                           onClick={() => setOpen(false)}
                         >
                           Panel admin
@@ -200,7 +266,7 @@ export default function Header() {
                     )}
                     <li>
                       <button
-                        className="w-full text-left px-3 py-2 hover:bg:white/5"
+                        className="w-full text-left px-3 py-2 hover:bg-white/5"
                         onClick={() => {
                           setOpen(false);
                           signOut();
@@ -267,7 +333,19 @@ export default function Header() {
                 </MobileNavItem>
               ))}
 
-            {(isProductor || isAdmin || isClubOwner) && (
+            {/* Solicitud */}
+            {shouldShowRoleRequest && (
+              <MobileNavItem to="/solicitud-acceso" onClick={() => setMobileOpen(false)}>
+                Solicitud de acceso
+              </MobileNavItem>
+            )}
+            {shouldShowRequestStatus && (
+              <MobileNavItem to="/solicitud-estado" onClick={() => setMobileOpen(false)}>
+                Estado de solicitud
+              </MobileNavItem>
+            )}
+
+            {(isProductor || isAdmin || isClubOwner || isRequestApproved) && (
               <MobileNavItem to="/mis-eventos" onClick={() => setMobileOpen(false)}>
                 Mis eventos
               </MobileNavItem>

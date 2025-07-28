@@ -14,6 +14,7 @@
     "@emotion/styled": "^11.14.1",
     "@hookform/resolvers": "^3.10.0",
     "@mui/material": "^7.2.0",
+    "@sendgrid/mail": "^8.1.5",
     "@supabase/supabase-js": "^2.52.1",
     "framer-motion": "^12.23.7",
     "lucide-react": "^0.441.0",
@@ -26,9 +27,10 @@
     "zod": "^3.25.76"
   },
   "devDependencies": {
+    "@types/node": "^24.1.0",
     "@types/react": "^18.2.66",
     "@types/react-dom": "^18.2.22",
-    "@vercel/node": "^5.3.6",
+    "@vercel/node": "^5.3.7",
     "@vitejs/plugin-react": "^4.2.0",
     "autoprefixer": "^10.4.21",
     "eslint": "^9.3.0",

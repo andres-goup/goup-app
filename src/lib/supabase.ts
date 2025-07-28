@@ -1,19 +1,13 @@
 import { createClient } from "@supabase/supabase-js";
-// (Opcional) si tipaste tu DB:
-// import type { Database } from "@/types/supabase"; 
 
-const url = import.meta.env.VITE_SUPABASE_URL as string;
-const anon = import.meta.env.VITE_SUPABASE_ANON_KEY as string;
+const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL!;
+const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY!;
 
-if (!url || !anon) {
-  // para detectar fácilmente si no se cargaron las envs
-  // eslint-disable-next-line no-console
-  console.error("Faltan VITE_SUPABASE_URL o VITE_SUPABASE_ANON_KEY");
-}
-
-export const supabase = createClient/*<Database>*/(url, anon, {
+export const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
   auth: {
     persistSession: true,
+    autoRefreshToken: true,
     detectSessionInUrl: true,
+    flowType: "pkce", // recomendado para SPA con OAuth también funciona con email/password
   },
 });

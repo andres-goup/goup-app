@@ -1,0 +1,5 @@
+project_id = "idurxxddeixlikqktmux"
+
+[functions]
+  [functions.sendgrid-role-request]
+    verify_jwt = false
