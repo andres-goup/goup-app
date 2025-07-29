@@ -12,24 +12,27 @@ type EstadoSolicitud = "pendiente" | "aprobada" | "rechazada";
 
 const ALL_ROLES: Rol[] = ["user", "productor", "club_owner", "admin"];
 
-/** Fila UI normalizada (nombres exactos de columnas en BD) */
 type Row = {
   id_usuario: string;
   nombre: string | null;
   correo: string | null;
 
-  rol: Rol;              // rol principal
-  rol_extra: Rol | null; // segundo rol opcional
+  rol: Rol;
+  rol_extra: Rol | null;
 
   can_create_event: boolean;
 
+  // Solicitud
   solicitud_tipo: TipoSolicitud | null;
   solicitud_estado: EstadoSolicitud | null;
-  solicitud_enviada_at: string | null; // timestamp string o null
+  solicitud_enviada_at: string | null;
+
+  // Nuevo estado lógico
+  is_active: boolean;
 };
 
 /* =========================
-   Normalizadores / type-guards
+   Normalizadores
    ========================= */
 const ROLES: readonly Rol[] = ["admin", "club_owner", "productor", "user"] as const;
 const TIPOS: readonly TipoSolicitud[] = ["productor", "club_owner", "ambos"] as const;
@@ -50,27 +53,27 @@ function asEstado(x: unknown): EstadoSolicitud | null {
   if (x == null || x === "") return null;
   return (ESTADOS as readonly string[]).includes(String(x)) ? (x as EstadoSolicitud) : null;
 }
+function asBool(x: unknown): boolean {
+  return x === true || x === "true" || x === 1 || x === "1";
+}
 
-/** Normaliza una fila cruda de Supabase al tipo Row */
 function normalizeRow(r: any): Row {
   return {
     id_usuario: String(r.id_usuario),
     nombre: r?.nombre ?? null,
     correo: r?.correo ?? null,
-
     rol: asRol(r?.rol),
     rol_extra: asRolOrNull(r?.rol_extra),
-
-    can_create_event: Boolean(r?.can_create_event),
-
+    can_create_event: asBool(r?.can_create_event),
     solicitud_tipo: asTipo(r?.solicitud_tipo),
     solicitud_estado: asEstado(r?.solicitud_estado),
     solicitud_enviada_at: r?.solicitud_enviada_at ?? null,
+    is_active: r?.is_active === false ? false : true, // default true si falta la columna
   };
 }
 
 /* =========================
-   Utilidades para roles/estados
+   Utilidades de roles/solicitud
    ========================= */
 function sanitizePair(a: Rol, b: Rol | null): { r1: Rol; r2: Rol | null } {
   if (b && a === b) return { r1: a, r2: null };
@@ -117,13 +120,12 @@ function hasElevatedRole(row: Pick<Row, "rol" | "rol_extra">): boolean {
   const elev: Rol[] = ["admin", "productor", "club_owner"];
   return elev.includes(row.rol) || (!!row.rol_extra && elev.includes(row.rol_extra));
 }
-
-function isSent(dt: string | null): boolean {
+function isSent(dt: string | null) {
   return !!dt;
 }
 
 /* =========================
-   Ordenamiento (mejorado)
+   Ordenamiento
    ========================= */
 type SortMode = "none" | "pending-first" | "approved-first";
 
@@ -131,8 +133,9 @@ function isApprovedRow(u: Row): boolean {
   return hasElevatedRole(u) || u.solicitud_estado === "aprobada";
 }
 function isPendingRow(u: Row): boolean {
-  // Pendiente = enviada, sin rechazar ni aprobar, y sin roles elevados
+  // Pendiente = enviada, sin rechazar ni aprobar, y sin roles elevados, y ACTIVO
   return (
+    u.is_active &&
     isSent(u.solicitud_enviada_at) &&
     !isApprovedRow(u) &&
     u.solicitud_estado !== "rechazada"
@@ -143,6 +146,11 @@ function tsToMs(ts: string | null): number {
   const t = new Date(ts).getTime();
   return Number.isFinite(t) ? t : 0;
 }
+
+/* =========================
+   Filtro por estado (tabs)
+   ========================= */
+type ViewMode = "all" | "active" | "disabled";
 
 /* =========================
    Página
@@ -156,17 +164,11 @@ export default function AdminUsersPage() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // Selector de orden
   const [sortMode, setSortMode] = useState<SortMode>("none");
+  const [viewMode, setViewMode] = useState<ViewMode>("active");
 
-  // Modal de eliminación
-  const [deleteTarget, setDeleteTarget] = useState<Row | null>(null);
-  const [deleting, setDeleting] = useState(false);
-
-  // Carga inicial
   useEffect(() => {
     let mounted = true;
-
     (async () => {
       setLoading(true);
       setError(null);
@@ -184,6 +186,7 @@ export default function AdminUsersPage() {
             "solicitud_tipo",
             "solicitud_estado",
             "solicitud_enviada_at",
+            "is_active",
           ].join(", ")
         )
         .order("created_at", { ascending: true });
@@ -206,7 +209,7 @@ export default function AdminUsersPage() {
     };
   }, []);
 
-  // Sólo admin puede ver esta página
+  // Sólo admin
   if (!authLoading && dbUser && dbUser.rol !== "admin") {
     return <Unauthorized />;
   }
@@ -214,7 +217,7 @@ export default function AdminUsersPage() {
   const markDirty = (u: Row) =>
     setDirty((prev) => ({ ...prev, [u.id_usuario]: u }));
 
-  /** Cambios de roles y permisos */
+  /** Cambios de rol/permiso */
   const onChangeRol1 = (id_usuario: string, newRol: Rol) => {
     setRows((prev) =>
       prev.map((r) => {
@@ -226,19 +229,16 @@ export default function AdminUsersPage() {
       })
     );
   };
-
   const onChangeRol2 = (id_usuario: string, newRol2: string) => {
     const value = (newRol2 || "") as Rol | "";
     setRows((prev) =>
       prev.map((r) => {
         if (r.id_usuario !== id_usuario) return r;
-
         if (value === "") {
           const updated = { ...r, rol_extra: null };
           markDirty(updated);
           return updated;
         }
-
         const candidate = value as Rol;
         const { r1, r2 } = sanitizePair(r.rol, candidate);
         const updated = { ...r, rol: r1, rol_extra: r2 };
@@ -247,7 +247,6 @@ export default function AdminUsersPage() {
       })
     );
   };
-
   const onToggleCreateEvent = (id_usuario: string, can: boolean) => {
     setRows((prev) =>
       prev.map((r) =>
@@ -258,7 +257,7 @@ export default function AdminUsersPage() {
     if (found) markDirty({ ...found, can_create_event: can });
   };
 
-  /** Confirmar (antes: Aprobar) */
+  /** Confirmar (antes “Aprobar”) */
   const onConfirm = (id_usuario: string) => {
     setRows((prev) =>
       prev.map((r) => {
@@ -267,6 +266,7 @@ export default function AdminUsersPage() {
         const updated: Row = {
           ...r,
           ...rolePair,
+          is_active: true,
           can_create_event: true,
           solicitud_estado: "aprobada",
         };
@@ -274,43 +274,48 @@ export default function AdminUsersPage() {
         return updated;
       })
     );
-    toast.success("Solicitud confirmada (recuerda Guardar cambios).");
+    toast.success("Usuario confirmado (recuerda Guardar cambios).");
   };
 
-  /** Eliminar (antes: Rechazar) – sólo si no tiene roles elevados y es user */
-  const canDelete = (u: Row) =>
-    !hasElevatedRole(u) && u.rol === "user" && (u.rol_extra === null || u.rol_extra === "user");
-
-  const askDelete = (row: Row) => {
-    if (!canDelete(row)) {
-      toast.error("Solo puedes eliminar usuarios sin roles asignados (o con rol 'user').");
-      return;
-    }
-    setDeleteTarget(row);
+  /** Deshabilitar (antes “Eliminar/Rechazar”) */
+  const onDisable = (id_usuario: string) => {
+    setRows((prev) =>
+      prev.map((r) => {
+        if (r.id_usuario !== id_usuario) return r;
+        const updated: Row = {
+          ...r,
+          is_active: false,
+          can_create_event: false,
+          // al deshabilitar, la solicitud queda rechazada
+          solicitud_estado: "rechazada",
+        };
+        markDirty(updated);
+        return updated;
+      })
+    );
+    toast("Usuario deshabilitado (recuerda Guardar cambios).", { icon: "⚠️" });
   };
 
-  const onConfirmDelete = async () => {
-    if (!deleteTarget) return;
-    try {
-      setDeleting(true);
-      const { error } = await supabase
-        .from("usuario")
-        .delete()
-        .eq("id_usuario", deleteTarget.id_usuario);
-
-      if (error) throw new Error(error.message);
-
-      setRows((prev) => prev.filter((r) => r.id_usuario !== deleteTarget.id_usuario));
-      setDeleteTarget(null);
-      toast.success("Usuario eliminado.");
-    } catch (e: any) {
-      toast.error(e?.message ?? "No se pudo eliminar el usuario");
-    } finally {
-      setDeleting(false);
-    }
+  /** Habilitar */
+  const onEnable = (id_usuario: string) => {
+    setRows((prev) =>
+      prev.map((r) => {
+        if (r.id_usuario !== id_usuario) return r;
+        const updated: Row = {
+          ...r,
+          is_active: true,
+          // Si quieres que al habilitar vuelva a pendiente, descomenta:
+          // solicitud_estado: r.solicitud_enviada_at ? "pendiente" : null,
+          solicitud_estado: r.solicitud_estado ?? null,
+        };
+        markDirty(updated);
+        return updated;
+      })
+    );
+    toast.success("Usuario habilitado (recuerda Guardar cambios).");
   };
 
-  /** Guardar cambios con AUTO-SYNC de estado aprobado si hay roles elevados */
+  /** Guardar con auto-sync */
   const onSave = async () => {
     const updates = Object.values(dirty);
     if (updates.length === 0) return;
@@ -320,30 +325,50 @@ export default function AdminUsersPage() {
 
       await Promise.all(
         updates.map((u) => {
-          const autoEstado: EstadoSolicitud | null =
-            hasElevatedRole(u) ? "aprobada" : (u.solicitud_estado ?? null);
+          const finalEstado: EstadoSolicitud | null =
+            !u.is_active
+              ? "rechazada"
+              : hasElevatedRole(u)
+              ? "aprobada"
+              : u.solicitud_estado ?? null;
+
+          const finalCanCreate = u.is_active ? u.can_create_event : false;
 
           return supabase
             .from("usuario")
             .update({
               rol: u.rol,
               rol_extra: u.rol_extra ?? null,
-              can_create_event: u.can_create_event,
-              solicitud_estado: autoEstado,
-              // No tocamos solicitud_tipo ni solicitud_enviada_at desde admin
+              can_create_event: finalCanCreate,
+              is_active: u.is_active,
+              solicitud_estado: finalEstado,
+              // No tocamos solicitud_tipo ni solicitud_enviada_at aquí
             })
             .eq("id_usuario", u.id_usuario);
         })
       );
 
-      // Ajustar localmente el estado por coherencia
+      // Reflect local
       setRows((prev) =>
         prev.map((r) => {
           const change = updates.find((u) => u.id_usuario === r.id_usuario);
           if (!change) return r;
-          const autoEstado: EstadoSolicitud | null =
-            hasElevatedRole(change) ? "aprobada" : (change.solicitud_estado ?? null);
-          return { ...r, ...change, solicitud_estado: autoEstado };
+
+          const finalEstado: EstadoSolicitud | null =
+            !change.is_active
+              ? "rechazada"
+              : hasElevatedRole(change)
+              ? "aprobada"
+              : change.solicitud_estado ?? null;
+
+          const finalCanCreate = change.is_active ? change.can_create_event : false;
+
+          return {
+            ...r,
+            ...change,
+            solicitud_estado: finalEstado,
+            can_create_event: finalCanCreate,
+          };
         })
       );
 
@@ -359,55 +384,56 @@ export default function AdminUsersPage() {
 
   const thereAreChanges = Object.keys(dirty).length > 0;
 
+  /** Contador de pendientes (solo activos) */
   const pendingCount = useMemo(
     () =>
       rows.filter(
         (r) =>
+          r.is_active &&
           isSent(r.solicitud_enviada_at) &&
-          !hasElevatedRole(r) &&
           r.solicitud_estado !== "aprobada" &&
-          r.solicitud_estado !== "rechazada"
+          r.solicitud_estado !== "rechazada" &&
+          !hasElevatedRole(r)
       ).length,
     [rows]
   );
 
-  /** ORDENAMIENTO */
+  /** Ordenamiento base */
   const sortedRows = useMemo(() => {
     const copy = [...rows];
-
     if (sortMode === "pending-first") {
       copy.sort((a, b) => {
         const ap = isPendingRow(a) ? 1 : 0;
         const bp = isPendingRow(b) ? 1 : 0;
-        if (bp !== ap) return bp - ap; // pendientes (1) sobre no pendientes (0)
-
+        if (bp !== ap) return bp - ap;
         if (ap === 1 && bp === 1) {
           const ad = tsToMs(a.solicitud_enviada_at);
           const bd = tsToMs(b.solicitud_enviada_at);
-          if (bd !== ad) return bd - ad; // más nuevas primero
+          if (bd !== ad) return bd - ad;
         }
-
-        const an = (a.nombre ?? "").toLowerCase();
-        const bn = (b.nombre ?? "").toLowerCase();
-        return an.localeCompare(bn);
+        return (a.nombre ?? "").toLowerCase().localeCompare((b.nombre ?? "").toLowerCase());
       });
     } else if (sortMode === "approved-first") {
       copy.sort((a, b) => {
         const aa = isApprovedRow(a) ? 1 : 0;
         const ba = isApprovedRow(b) ? 1 : 0;
         if (ba !== aa) return ba - aa;
-        const an = (a.nombre ?? "").toLowerCase();
-        const bn = (b.nombre ?? "").toLowerCase();
-        return an.localeCompare(bn);
+        return (a.nombre ?? "").toLowerCase().localeCompare((b.nombre ?? "").toLowerCase());
       });
     } else {
       copy.sort((a, b) =>
         (a.nombre ?? "").toLowerCase().localeCompare((b.nombre ?? "").toLowerCase())
       );
     }
-
     return copy;
   }, [rows, sortMode]);
+
+  /** Filtro por vista */
+  const filteredRows = useMemo(() => {
+    if (viewMode === "all") return sortedRows;
+    if (viewMode === "active") return sortedRows.filter((r) => r.is_active);
+    return sortedRows.filter((r) => !r.is_active);
+  }, [sortedRows, viewMode]);
 
   if (authLoading || loading) {
     return (
@@ -432,8 +458,30 @@ export default function AdminUsersPage() {
             )}
           </div>
 
-          <div className="flex items-center gap-3">
-            {/* Selector de orden */}
+          <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3">
+            {/* Tabs de vista */}
+            <div className="inline-flex rounded-md border border-white/10 overflow-hidden">
+              <button
+                className={`px-3 py-1.5 text-sm ${viewMode === "active" ? "bg-white/10 text-white" : "text-white/70 hover:bg-white/5"}`}
+                onClick={() => setViewMode("active")}
+              >
+                Activos
+              </button>
+              <button
+                className={`px-3 py-1.5 text-sm ${viewMode === "disabled" ? "bg-white/10 text-white" : "text-white/70 hover:bg-white/5"}`}
+                onClick={() => setViewMode("disabled")}
+              >
+                Deshabilitados
+              </button>
+              <button
+                className={`px-3 py-1.5 text-sm ${viewMode === "all" ? "bg-white/10 text-white" : "text-white/70 hover:bg-white/5"}`}
+                onClick={() => setViewMode("all")}
+              >
+                Todos
+              </button>
+            </div>
+
+            {/* Orden */}
             <label className="text-sm text-white/80">
               Ordenar:&nbsp;
               <select
@@ -469,6 +517,7 @@ export default function AdminUsersPage() {
               <tr>
                 <th className="px-4 py-3 font-semibold">Nombre</th>
                 <th className="px-4 py-3 font-semibold">Correo</th>
+                <th className="px-4 py-3 font-semibold">Estado</th>
                 <th className="px-4 py-3 font-semibold">Rol 1</th>
                 <th className="px-4 py-3 font-semibold">Rol 2 (opcional)</th>
                 <th className="px-4 py-3 font-semibold">Puede crear eventos</th>
@@ -477,42 +526,48 @@ export default function AdminUsersPage() {
               </tr>
             </thead>
             <tbody>
-              {sortedRows.length === 0 ? (
+              {filteredRows.length === 0 ? (
                 <tr>
-                  <td colSpan={7} className="px-4 py-6 text-center text-zinc-400">
-                    No hay usuarios.
+                  <td colSpan={8} className="px-4 py-6 text-center text-zinc-400">
+                    No hay usuarios en esta vista.
                   </td>
                 </tr>
               ) : (
-                sortedRows.map((u) => {
+                filteredRows.map((u) => {
                   const rol2Options = ALL_ROLES.filter((r) => r !== u.rol);
 
                   const approved = isApprovedRow(u);
                   const rejected = u.solicitud_estado === "rechazada";
 
-                  const estadoBadge = approved
+                  const estadoUserBadge = u.is_active
                     ? "text-emerald-300 bg-emerald-500/15 border-emerald-400/30"
-                    : rejected
-                    ? "text-rose-300 bg-rose-500/15 border-rose-400/30"
-                    : isSent(u.solicitud_enviada_at)
-                    ? "text-amber-300 bg-amber-500/15 border-amber-400/30"
-                    : "text-white/60 bg-white/10 border-white/20";
+                    : "text-rose-300 bg-rose-500/15 border-rose-400/30";
 
-                  const estadoLabel = approved
-                    ? "aprobada"
-                    : rejected
-                    ? "rechazada"
-                    : isSent(u.solicitud_enviada_at)
-                    ? "pendiente"
-                    : "—";
+                  const estadoBadge =
+                    approved
+                      ? "text-emerald-300 bg-emerald-500/15 border-emerald-400/30"
+                      : rejected
+                      ? "text-rose-300 bg-rose-500/15 border-rose-400/30"
+                      : isSent(u.solicitud_enviada_at)
+                      ? "text-amber-300 bg-amber-500/15 border-amber-400/30"
+                      : "text-white/60 bg-white/10 border-white/20";
+
+                  const estadoLabel =
+                    approved ? "aprobada" :
+                    rejected ? "rechazada" :
+                    isSent(u.solicitud_enviada_at) ? "pendiente" : "—";
 
                   return (
-                    <tr
-                      key={u.id_usuario}
-                      className="border-t border-zinc-800 hover:bg-zinc-900/30"
-                    >
+                    <tr key={u.id_usuario} className="border-t border-zinc-800 hover:bg-zinc-900/30">
                       <td className="px-4 py-3">{u.nombre ?? "—"}</td>
                       <td className="px-4 py-3">{u.correo ?? "—"}</td>
+
+                      {/* Estado usuario */}
+                      <td className="px-4 py-3">
+                        <span className={`inline-flex w-fit items-center rounded-full border px-2 py-0.5 text-[11px] ${estadoUserBadge}`}>
+                          {u.is_active ? "Activo" : "Deshabilitado"}
+                        </span>
+                      </td>
 
                       {/* Rol principal */}
                       <td className="px-4 py-3">
@@ -520,27 +575,27 @@ export default function AdminUsersPage() {
                           className="bg-zinc-800 border border-zinc-700 rounded px-2 py-1"
                           value={u.rol}
                           onChange={(e) => onChangeRol1(u.id_usuario, e.target.value as Rol)}
+                          disabled={!u.is_active}
+                          title={!u.is_active ? "Usuario deshabilitado" : undefined}
                         >
                           {ALL_ROLES.map((r) => (
-                            <option key={r} value={r}>
-                              {r}
-                            </option>
+                            <option key={r} value={r}>{r}</option>
                           ))}
                         </select>
                       </td>
 
-                      {/* Rol secundario (opcional) */}
+                      {/* Rol secundario */}
                       <td className="px-4 py-3">
                         <select
                           className="bg-zinc-800 border border-zinc-700 rounded px-2 py-1"
                           value={u.rol_extra ?? ""}
                           onChange={(e) => onChangeRol2(u.id_usuario, e.target.value)}
+                          disabled={!u.is_active}
+                          title={!u.is_active ? "Usuario deshabilitado" : undefined}
                         >
                           <option value="">— ninguno —</option>
                           {rol2Options.map((r) => (
-                            <option key={r} value={r}>
-                              {r}
-                            </option>
+                            <option key={r} value={r}>{r}</option>
                           ))}
                         </select>
                       </td>
@@ -552,20 +607,17 @@ export default function AdminUsersPage() {
                             type="checkbox"
                             className="h-4 w-4 accent-[#8e2afc]"
                             checked={u.can_create_event}
-                            onChange={(e) =>
-                              onToggleCreateEvent(u.id_usuario, e.target.checked)
-                            }
+                            onChange={(e) => onToggleCreateEvent(u.id_usuario, e.target.checked)}
+                            disabled={!u.is_active}
                           />
                           <span className="text-sm text-zinc-300">Sí</span>
                         </label>
                       </td>
 
-                      {/* Solicitud (estado + tipo + fecha) */}
+                      {/* Solicitud */}
                       <td className="px-4 py-3">
                         <div className="flex flex-col gap-1">
-                          <span
-                            className={`inline-flex w-fit items-center rounded-full border px-2 py-0.5 text-[11px] ${estadoBadge}`}
-                          >
+                          <span className={`inline-flex w-fit items-center rounded-full border px-2 py-0.5 text-[11px] ${estadoBadge}`}>
                             {estadoLabel}
                           </span>
                           <span className="text-xs text-white/70">
@@ -581,35 +633,42 @@ export default function AdminUsersPage() {
 
                       {/* Acciones */}
                       <td className="px-4 py-3">
-                        {approved ? (
-                          <span className="inline-flex items-center rounded-full border px-2 py-0.5 text-[11px] text-emerald-300 bg-emerald-500/15 border-emerald-400/30">
-                            Aprobado
-                          </span>
+                        {u.is_active ? (
+                          approved ? (
+                            <div className="flex items-center gap-2">
+                              <span className="inline-flex items-center rounded-full border px-2 py-0.5 text-[11px] text-emerald-300 bg-emerald-500/15 border-emerald-400/30">
+                                Aprobado
+                              </span>
+                              <button
+                                className="px-3 py-1.5 rounded bg-rose-600/90 hover:bg-rose-600 text-white text-xs"
+                                onClick={() => onDisable(u.id_usuario)}
+                              >
+                                Deshabilitar
+                              </button>
+                            </div>
+                          ) : (
+                            <div className="flex items-center gap-2">
+                              <button
+                                className="px-3 py-1.5 rounded bg-emerald-600/90 hover:bg-emerald-600 text-white text-xs"
+                                onClick={() => onConfirm(u.id_usuario)}
+                              >
+                                Confirmar
+                              </button>
+                              <button
+                                className="px-3 py-1.5 rounded bg-rose-600/90 hover:bg-rose-600 text-white text-xs"
+                                onClick={() => onDisable(u.id_usuario)}
+                              >
+                                Deshabilitar
+                              </button>
+                            </div>
+                          )
                         ) : (
-                          <div className="flex items-center gap-2">
-                            <button
-                              className="px-3 py-1.5 rounded bg-emerald-600/90 hover:bg-emerald-600 text-white text-xs"
-                              onClick={() => onConfirm(u.id_usuario)}
-                            >
-                              Confirmar
-                            </button>
-                            <button
-                              className={`px-3 py-1.5 rounded text-white text-xs ${
-                                canDelete(u)
-                                  ? "bg-rose-600/90 hover:bg-rose-600"
-                                  : "bg-zinc-700 cursor-not-allowed"
-                              }`}
-                              disabled={!canDelete(u)}
-                              onClick={() => askDelete(u)}
-                              title={
-                                canDelete(u)
-                                  ? "Eliminar usuario"
-                                  : "Solo puedes eliminar usuarios sin roles (o con rol 'user')"
-                              }
-                            >
-                              Eliminar
-                            </button>
-                          </div>
+                          <button
+                            className="px-3 py-1.5 rounded bg-sky-600/90 hover:bg-sky-600 text-white text-xs"
+                            onClick={() => onEnable(u.id_usuario)}
+                          >
+                            Habilitar
+                          </button>
                         )}
                       </td>
                     </tr>
@@ -624,34 +683,6 @@ export default function AdminUsersPage() {
           <p className="text-xs text-zinc-400">Tienes cambios sin guardar.</p>
         )}
       </div>
-
-      {/* Modal eliminar usuario */}
-      {deleteTarget && (
-        <div className="fixed inset-0 z-50 grid place-items-center bg-black/70">
-          <div className="bg-neutral-900 rounded-md p-6 w-[92vw] max-w-md text-center border border-rose-500/30">
-            <h3 className="text-lg font-semibold text-rose-300 mb-2">¿Eliminar este usuario?</h3>
-            <p className="text-white/70 mb-5">
-              Esta acción es <b>permanente</b> y no hay vuelta atrás.
-            </p>
-            <div className="flex justify-center gap-3">
-              <button
-                className="px-4 py-2 rounded border border-white/20 hover:bg-white/10"
-                onClick={() => setDeleteTarget(null)}
-                disabled={deleting}
-              >
-                No, cancelar
-              </button>
-              <button
-                className="px-4 py-2 rounded bg-rose-600 hover:bg-rose-500 disabled:opacity-60"
-                onClick={onConfirmDelete}
-                disabled={deleting}
-              >
-                {deleting ? "Eliminando…" : "Sí, borrar"}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
     </main>
   );
 }
