@@ -16,8 +16,8 @@ import { motion, AnimatePresence } from "framer-motion";
 import logo from "@/assets/goup_logo.png";
 import { eventSchema } from "@/lib/schemas";
 import { useStepper } from "@/hooks/useStepper";
-import { supabase } from "@/lib/supabase";
 import { useNavigate } from "react-router-dom";
+import { useAuth } from "@/auth/AuthContext";
 import { LineupFields } from "@/components/form/LineupFields";
 
 import {
@@ -29,15 +29,23 @@ import {
   StepErrorBanner,
 } from "@/components/form/control";
 
-/* =========================================================
- * Tipos locales
- * =======================================================*/
+import {
+  Firestore,
+  collection,
+  doc,
+  setDoc,
+} from "firebase/firestore";
+import {
+  getStorage,
+  ref as storageRef,
+  uploadBytes,
+  getDownloadURL,
+} from "firebase/storage";
+import { db as firebaseDb } from "@/lib/firebase";
+
 export type EventFormValues = z.infer<typeof eventSchema>;
 type Keys = FieldPath<EventFormValues>;
 
-/* =========================================================
- * Defaults alineados al schema (mantengo tus nombres)
- * =======================================================*/
 const defaultEventValues: EventFormValues = {
   nombre: "",
   tipo: "",
@@ -54,32 +62,17 @@ const defaultEventValues: EventFormValues = {
   flyer: null,
   imgSec: null,
   edad: 18,
-  tieneVip: "",         // select: "No" | "1" | "2" | ... | "Más de 5"
-  vip: "",              // (no usado en UI, se ignora en payload)
-  reservas: false,      // select "Sí"/"No" → lo fuerzo a boolean
-  tieneLineup: false,   // select "Sí"/"No" → lo fuerzo a boolean
-  cantidadDJs: "",      // derivado de djs.length al enviar
+  tieneVip: "",
+  vip: "",
+  reservas: false,
+  tieneLineup: false,
+  cantidadDJs: "",
   djs: [],
   dress_code: "",
 };
 
-const generosMusicales = [
-  "Reguetón",
-  "Techno",
-  "House",
-  "Pop",
-  "Salsa",
-  "Hardstyle",
-  "Trance",
-  "Hip-Hop",
-  "Urbano",
-] as const;
-
-/* =========================================================
- * Helpers de errores (igual que tuyo)
- * =======================================================*/
 function isFieldError(v: unknown): v is FieldError {
-  return typeof v === "object" && v !== null && "message" in (v as Record<string, unknown>);
+  return typeof v === "object" && v !== null && "message" in (v as any);
 }
 function flattenErrors<T extends FieldValues>(
   obj: FieldErrors<T>,
@@ -104,16 +97,34 @@ function collectStepErrors<T extends FieldValues>(
   return fields.map((f) => flat[f]).filter(Boolean) as string[];
 }
 
-/* =========================================================
- * UI locales
- * =======================================================*/
+const asBool = (v: unknown): boolean => {
+  if (typeof v === "boolean") return v;
+  if (v == null) return false;
+  const s = String(v).toLowerCase();
+  return s === "si" || s === "sí" || s === "true" || s === "1";
+};
+const asInt = (v: unknown, fallback = 0): number => {
+  const n = Number(v);
+  return Number.isFinite(n) ? n : fallback;
+};
+const vipToCount = (v: unknown): number => {
+  const s = String(v);
+  if (s.toLowerCase() === "no" || s === "" || s === "0") return 0;
+  if (s.toLowerCase().includes("más de")) return 6;
+  const n = Number(s);
+  return Number.isFinite(n) ? n : 0;
+};
+const vipToBool = (v: unknown): boolean => vipToCount(v) > 0;
+
 function StepDots({ step, total }: { step: number; total: number }) {
   return (
     <div className="flex items-center justify-center gap-2">
       {Array.from({ length: total }).map((_, i) => (
         <span
           key={i}
-          className={`h-2 w-2 rounded-full ${i === step ? "bg-[#8e2afc]" : "bg-white/20"}`}
+          className={`h-2 w-2 rounded-full ${
+            i === step ? "bg-[#8e2afc]" : "bg-white/20"
+          }`}
         />
       ))}
     </div>
@@ -180,32 +191,6 @@ function SuccessModal({
   );
 }
 
-/* =========================================================
- * Coerciones seguras (no tocan tu UI ni tu schema)
- * =======================================================*/
-const asBool = (v: unknown): boolean => {
-  if (typeof v === "boolean") return v;
-  if (v == null) return false;
-  const s = String(v).toLowerCase();
-  return s === "si" || s === "sí" || s === "true" || s === "1";
-};
-const asInt = (v: unknown, fallback = 0): number => {
-  const n = Number(v);
-  return Number.isFinite(n) ? n : fallback;
-};
-/** tu select de VIP hoy guarda "No" | "1" | ... | "Más de 5" */
-const vipToCount = (v: unknown): number => {
-  const s = String(v);
-  if (s.toLowerCase() === "no" || s === "" || s === "0") return 0;
-  if (s.toLowerCase().includes("más de")) return 6; // puedes ajustar
-  const n = Number(s);
-  return Number.isFinite(n) ? n : 0;
-};
-const vipToBool = (v: unknown): boolean => vipToCount(v) > 0;
-
-/* =========================================================
- * Página
- * =======================================================*/
 export default function EventPage() {
   return <EventWizard />;
 }
@@ -220,21 +205,22 @@ function EventWizard() {
   const [loadingStep, setLoadingStep] = useState(false);
   const [stepErrors, setStepErrors] = useState<string[]>([]);
   const [sent, setSent] = useState(false);
+  const [generosOtro, setGenerosOtro] = useState("");
 
-  const steps = useSteps();
+  const steps = useSteps(methods, generosOtro, setGenerosOtro);
   const { current, total, next, prev } = useStepper(steps);
   const navigate = useNavigate();
+  const { user } = useAuth();
 
-  // Campos por paso (agrego "reservas" aquí; saco "vip" que no usas)
   const stepFields: Keys[][] = [
-    ["nombre", "tipo"], // 0
-    ["fecha", "horaInicio", "horaCierre"], // 1
-    ["capacidad"], // 2
-    ["promotor", "telefono", "email"], // 3
-    ["desc", "generos"], // 4
-    ["edad", "dress_code", "tieneVip", "reservas", "tieneLineup", "djs"], // 5
-    ["flyer", "imgSec"], // 6
-    [], // review
+    ["nombre", "tipo"],
+    ["fecha", "horaInicio", "horaCierre"],
+    ["capacidad"],
+    ["promotor", "telefono", "email"],
+    ["desc", "generos"],
+    ["edad", "dress_code", "tieneVip", "reservas", "tieneLineup", "djs"],
+    ["flyer", "imgSec"],
+    [],
   ];
 
   const onSubmitStep = async () => {
@@ -249,51 +235,39 @@ function EventWizard() {
     setStepErrors([]);
     toast.success("Paso guardado ✅");
     next();
-    setTimeout(() => window.scrollTo({ top: 0, behavior: "smooth" }), 0);
+    window.scrollTo({ top: 0, behavior: "smooth" });
   };
 
   const onSubmitFinal = async (data: EventFormValues) => {
     if (sent) return;
+    if (!user?.uid) {
+      toast.error("Debes iniciar sesión");
+      return;
+    }
+    setLoadingStep(true);
+
     try {
-      setLoadingStep(true);
-
-      // 1) usuario
-      const { data: auth } = await supabase.auth.getUser();
-      const user = auth?.user;
-      if (!user) throw new Error("No estás autenticado");
-
-      // 2) id_usuario
-      const { data: usuarioData, error: usuarioError } = await supabase
-        .from("usuario")
-        .select("id_usuario")
-        .eq("auth_user_id", user.id)
-        .single();
-      if (usuarioError || !usuarioData) throw new Error("No se encontró tu perfil");
-
-      const id_usuario = usuarioData.id_usuario;
-
-      // 3) subir imágenes
-      const uploadImage = async (file: File | null, folder: string) => {
+      const upload = async (file: File | null, folder: string) => {
         if (!file) return null;
-        const filePath = `${folder}/${Date.now()}_${file.name}`;
-        const { error } = await supabase.storage
-          .from("evento")
-          .upload(filePath, file, { cacheControl: "3600", upsert: false });
-        if (error) throw new Error(`Error al subir ${folder}: ${error.message}`);
-        return supabase.storage.from("evento").getPublicUrl(filePath).data.publicUrl;
+        const storage = getStorage();
+        const ext = file.name.split(".").pop() || "jpg";
+        const path = `Eventos/${user.uid}/${folder}/${Date.now()}.${ext}`;
+        const ref = storageRef(storage, path);
+        await uploadBytes(ref, file);
+        return getDownloadURL(ref);
       };
+      const flyerUrl = await upload(data.flyer as File | null, "flyer");
+      const imgSecUrl = await upload(data.imgSec as File | null, "imgSec");
 
-      const flyerUrl = await uploadImage(data.flyer, "flyer");
-      const imgSecUrl = await uploadImage(data.imgSec, "imgSec");
-
-      // 4) normalizar lineup / edades / booleans
       const cleanedDJs = (data.djs || [])
         .map((dj) => (dj ?? "").toString().trim())
         .filter(Boolean);
 
-      // ⚠️ armamos un payload limpio para tu tabla "evento"
+      const generosFinal = data.generos.includes("Otros") && generosOtro.trim()
+        ? [...data.generos.filter((g) => g !== "Otros"), generosOtro.trim()]
+        : data.generos;
+
       const payload = {
-        // campos tal cual del form
         nombre: data.nombre,
         tipo: data.tipo,
         fecha: data.fecha,
@@ -305,53 +279,45 @@ function EventWizard() {
         telefono: data.telefono,
         email: data.email,
         desc: data.desc,
-        generos: data.generos,
-
-        // normalizados
+        generos: generosFinal,
         edad: asInt(data.edad, 18),
         dress_code: data.dress_code,
-
-        // VIP: derivamos cantidad y boolean
         tieneVip: vipToBool(data.tieneVip),
         cantidadZonasVip: vipToCount(data.tieneVip),
-
-        // reservas / lineup como boolean + derivados
-        aceptaReservas: asBool(data.reservas), // ⬅️ si tu columna se llama `reservas`, cámbialo por `reservas: asBool(data.reservas)`
+        aceptaReservas: asBool(data.reservas),
         tieneLineup: asBool(data.tieneLineup),
         cantidadDJs: cleanedDJs.length,
         djs: cleanedDJs,
-
-        // imágenes + FK
         flyer: flyerUrl,
         imgSec: imgSecUrl,
-        id_usuario,
+        uid_usersWeb: "/usersWeb/" + user.uid,
+        createdAt: new Date().toISOString(),
       };
 
-      console.log("Payload evento a insertar:", payload);
-
-      // 5) insertar evento
-      const { error: insertError } = await supabase.from("evento").insert([payload]);
-      if (insertError) throw new Error(insertError.message);
+      const eventosCol = collection(firebaseDb as Firestore, "Eventos");
+      const newDoc = doc(eventosCol);
+      await setDoc(newDoc, payload);
 
       toast.success("¡Evento creado con éxito!");
       setSent(true);
       methods.reset(defaultEventValues);
-      setTimeout(() => navigate("/mis-eventos"), 1800);
-    } catch (err) {
-      toast.error((err as Error).message ?? "Error inesperado");
+      setTimeout(() => navigate("/mis-eventos"), 1500);
+    } catch (err: any) {
+      console.error("Error creando evento:", err);
+      toast.error(err.message || "Error inesperado");
     } finally {
       setLoadingStep(false);
     }
   };
 
   return (
-    <main className="relative min-h-screen text-white px-4 py-8 overflow-x-hidden">
+    <main className="relative text-white px-4 py-8 overflow-x-hidden">
       <header className="max-w-3xl mx-auto space-y-2 mb-8 text-center">
         <img src={logo} alt="GoUp" className="mx-auto w-28" />
         <h1 className="text-3xl md:text-4xl font-extrabold">
-          CREAR <span className="text-[#8e2afc]">EVENTO</span> NOCTURNO
+          CREAR <span className="text-[#8e2afc]">EVENTO</span>
         </h1>
-        <p className="text-white/70">Organiza la experiencia nocturna perfecta con GoUp</p>
+        <p className="text-white/70">Organiza la experiencia perfecta con GoUp</p>
       </header>
 
       <FormProvider {...methods}>
@@ -364,11 +330,8 @@ function EventWizard() {
               onSubmitStep();
             }
           }}
-          onKeyDown={(e) => {
-            if (e.key === "Enter") e.preventDefault();
-          }}
-          className="max-w-3xl mx-auto space-y-8 mt-8"
           noValidate
+          className="max-w-3xl mx-auto space-y-8"
         >
           <StepDots step={current} total={total} />
           <StepErrorBanner errors={stepErrors} />
@@ -394,8 +357,7 @@ function EventWizard() {
             ) : (
               <span />
             )}
-
-            <LoadingButton type="submit" loading={loadingStep}>
+            <LoadingButton loading={loadingStep} type="submit">
               {current === total - 1 ? "Enviar formulario" : "Siguiente"}
             </LoadingButton>
           </div>
@@ -412,10 +374,25 @@ function EventWizard() {
   );
 }
 
-/* =========================================================
- * Steps — tus mismos bloques
- * =======================================================*/
-function useSteps() {
+function useSteps(
+  methods: ReturnType<typeof useForm<EventFormValues>>,
+  generosOtro: string,
+  setGenerosOtro: React.Dispatch<React.SetStateAction<string>>
+) {
+  const generosMusicales = [
+    "Reguetón",
+    "Techno",
+    "House",
+    "Pop",
+    "Salsa",
+    "Hardstyle",
+    "Trance",
+    "Hip-Hop",
+    "Urbano",
+    "Guaracha",
+    "Otros",
+  ] as const;
+
   return [
     {
       icon: "🎵",
@@ -431,7 +408,6 @@ function useSteps() {
             name="tipo"
             label="Tipo de Evento *"
             options={["Club", "Festival", "After", "Privado", "Open Air", "Bar"]}
-            placeholder="Selecciona el tipo"
           />
         </LocalCard>
       ),
@@ -441,10 +417,10 @@ function useSteps() {
       title: "Fecha & Horario",
       content: (
         <LocalCard title="Fecha & Horario">
-          <RHFInput name="fecha" type="date" label="Fecha del Evento *" />
+          <RHFInput name="fecha" type="date" label="Fecha *" />
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <RHFInput name="horaInicio" type="time" label="Hora de Inicio *" />
-            <RHFInput name="horaCierre" type="time" label="Hora de Cierre *" />
+            <RHFInput name="horaInicio" type="time" label="Inicio *" />
+            <RHFInput name="horaCierre" type="time" label="Cierre *" />
           </div>
         </LocalCard>
       ),
@@ -457,8 +433,7 @@ function useSteps() {
           <RHFSelect
             name="capacidad"
             label="Capacidad esperada *"
-            placeholder="Selecciona una opción"
-            options={["0 a 200", "201 a 500", "501 a 1000", "1001 a 2000", "Más de 2000"]}
+            options={["0 a 200", "201 a 500", "501 a 1000", "Más de 1000"]}
           />
         </LocalCard>
       ),
@@ -468,9 +443,9 @@ function useSteps() {
       title: "Contacto organizador",
       content: (
         <LocalCard title="Contacto organizador">
-          <RHFInput name="promotor" label="Nombre del Promotor *" placeholder="Tu nombre o nombre artístico" />
-          <RHFInput name="telefono" label="WhatsApp/Teléfono *" placeholder="+56 9 1234 5678" />
-          <RHFInput name="email" type="email" label="Email *" placeholder="promotor@goup.com" />
+          <RHFInput name="promotor" label="Promotor *" />
+          <RHFInput name="telefono" label="Teléfono *" />
+          <RHFInput name="email" type="email" label="Email *" />
         </LocalCard>
       ),
     },
@@ -479,13 +454,20 @@ function useSteps() {
       title: "Concepto & Experiencia",
       content: (
         <LocalCard title="Concepto & Experiencia">
-          <RHFTextarea
-            name="desc"
-            label="Describe la atmósfera, música, efectos especiales, dress code, etc. *"
-            rows={5}
-            placeholder="Género musical, DJ lineup, luces, máquinas de humo, dress code, ..."
+          <RHFTextarea name="desc" label="Descripción *" rows={4} />
+          <RHFCheckboxGroup
+            name="generos"
+            label="Géneros musicales *"
+            options={[...generosMusicales]}
           />
-          <RHFCheckboxGroup name="generos" label="Géneros musicales (puedes elegir varios) *" options={[...generosMusicales]} />
+          {methods.watch("generos")?.includes("Otros") && (
+            <RHFInput
+              name="generosOtro"
+              label="¿Cuál otro género?"
+              value={generosOtro}
+              onChange={(e) => setGenerosOtro(e.target.value)}
+            />
+          )}
         </LocalCard>
       ),
     },
@@ -496,23 +478,17 @@ function useSteps() {
         <LocalCard title="Políticas del evento">
           <RHFSelect
             name="edad"
-            label="Edad mínima para el ingreso *"
+            label="Edad mínima *"
             options={Array.from({ length: 53 }, (_, i) => `${i + 18}`)}
-            placeholder="Selecciona edad mínima"
           />
           <RHFSelect
             name="dress_code"
-            label="Código de vestimenta *"
-            options={["Casual", "Formal", "Semi-formal", "Urbano", "Fiesta temática"]}
-            placeholder="Selecciona el código"
+            label="Dress code *"
+            options={["Casual", "Formal", "Semi-formal", "Urbano", "Temático"]}
           />
-          <RHFSelect
-            name="tieneVip"
-            label="¿Tiene zonas VIP?"
-            options={["No", "1", "2", "3", "4", "5", "Más de 5"]}
-          />
+          <RHFSelect name="tieneVip" label="¿Zonas VIP?" options={["No", "1", "2", "Más de 5"]} />
           <RHFSelect name="reservas" label="¿Acepta reservas?" options={["Sí", "No"]} />
-          <RHFSelect name="tieneLineup" label="¿Tendrá DJs con line-up?" options={["Sí", "No"]} />
+          <RHFSelect name="tieneLineup" label="¿Tendrá Lineup?" options={["Sí", "No"]} />
           <LineupFields />
         </LocalCard>
       ),
@@ -523,7 +499,7 @@ function useSteps() {
       content: (
         <LocalCard title="Flyer & Seguridad">
           <RHFFile name="flyer" label="Flyer del evento" />
-          <RHFFile name="imgSec" label="Imagen secundaria (opcional)" />
+          <RHFFile name="imgSec" label="Imagen secundaria" />
         </LocalCard>
       ),
     },
@@ -532,7 +508,7 @@ function useSteps() {
       title: "Revisión",
       content: (
         <LocalCard title="Revisión final">
-          <p className="text-sm text-white/70">Revisa que toda la información sea correcta antes de enviar.</p>
+          <p className="text-white/70">Revisa todos los datos antes de enviar.</p>
         </LocalCard>
       ),
     },

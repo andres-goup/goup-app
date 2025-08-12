@@ -86,6 +86,7 @@ export const eventSchema = z.object({
   .transform((val) => parseInt(val, 10))
   .refine((val) => val >= 18, {
     message: "La edad mínima debe ser 18 años o más",
+  
   }),
 
   
@@ -101,6 +102,7 @@ export const eventSchema = z.object({
       cantidadDJs: z.string().optional(),
       djs: z.array(z.string()).optional(),
   dress_code: z.string({ required_error: "Debes seleccionar un código de vestimenta" }),
+  generosOtro: z.string().optional(),
       
   });
   export type EventData = z.infer<typeof eventSchema>;

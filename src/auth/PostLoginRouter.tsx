@@ -1,26 +1,28 @@
+// src/auth/PostLoginRouter.tsx
 import { useEffect } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
 import { useAuth } from "./AuthContext";
 import { roleHome } from "./roleHome";
 
 export default function PostLoginRouter() {
-  const { loading, session, dbUser } = useAuth();
+  const { loading, user, dbUser } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
 
   useEffect(() => {
     if (loading) return;
 
-    // Si no está logueado => login
-    if (!session) {
+    // 1) Si no hay usuario de Firebase, lo mandamos al login
+    if (!user) {
       navigate("/login", { replace: true, state: { from: location } });
       return;
     }
 
-    // Ya logueado: manda a su “home” por rol
-    const path = dbUser ? roleHome[dbUser.rol] ?? "/" : "/";
-    navigate(path, { replace: true });
-  }, [loading, session, dbUser, navigate, location]);
+    // 2) Si sí hay user, calculamos su home según rol en dbUser
+    const role = dbUser?.rol;
+    const homePath = role ? roleHome[role] ?? "/" : "/";
+    navigate(homePath, { replace: true });
+  }, [loading, user, dbUser, navigate, location]);
 
-  return null; // solo redirige
+  return null;
 }

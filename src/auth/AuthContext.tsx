@@ -1,86 +1,91 @@
-import {
+import React, {
   createContext,
   useContext,
   useEffect,
   useState,
   type ReactNode,
 } from "react";
-import { supabase } from "@/lib/supabase";
-import type { Session, User } from "@supabase/supabase-js";
+import {
+  auth,
+  provider,
+  signOut as firebaseSignOut,
+  onUserChanged,
+} from "@/lib/firebase";
+import { signInWithPopup } from "firebase/auth";
+import { doc, getDoc, setDoc } from "firebase/firestore";
+import { db } from "@/lib/firebase";
+import type { User as FirebaseUser } from "firebase/auth";
 import type { DBUser } from "@/types/auth";
 
 type AuthContextType = {
-  user: User | null;
-  session: Session | null;
+  user: FirebaseUser | null;
   dbUser: DBUser | null;
   rol: string | null;
   loading: boolean;
-  signOut: () => void;
+  signOut: () => Promise<void>;
   signInWithGoogle: () => Promise<void>;
 };
 
-// ✅ solo UNA declaración del contexto
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 export function AuthProvider({ children }: { children: ReactNode }) {
-  const [session, setSession] = useState<Session | null>(null);
-  const [user, setUser] = useState<User | null>(null);
+  const [user, setUser] = useState<FirebaseUser | null>(null);
   const [dbUser, setDbUser] = useState<DBUser | null>(null);
   const [rol, setRol] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
-  // Obtener sesión y usuario
+  // Escuchar cambios de auth
   useEffect(() => {
-    const getSession = async () => {
-      const { data } = await supabase.auth.getSession();
-      setSession(data.session);
-      setUser(data.session?.user || null);
-    };
-
-    const {
-      data: { subscription },
-    } = supabase.auth.onAuthStateChange((_event, session) => {
-      setSession(session);
-      setUser(session?.user || null);
+    const unsubscribe = onUserChanged(firebaseUser => {
+      setUser(firebaseUser);
+      setLoading(false);
     });
-
-    getSession().finally(() => setLoading(false));
-
-    return () => subscription.unsubscribe();
+    return unsubscribe;
   }, []);
 
-  // Obtener usuario desde la base de datos
+  // Cuando cambia `user`, cargamos o creamos su perfil en Firestore
   useEffect(() => {
-    const fetchDbUser = async () => {
-      if (!user) {
+    if (!user) {
+      setDbUser(null);
+      setRol(null);
+      return;
+    }
+
+    const fetchOrCreateDbUser = async () => {
+      try {
+        const ref = doc(db, "usersWeb", user.uid);
+        const snap = await getDoc(ref);
+
+        if (!snap.exists()) {
+          // Si el documento no existe, lo creamos
+          const newUser: DBUser = {
+            uid: user.uid,
+            email: user.email ?? "",
+            nombre: user.displayName ?? "",
+            rol: "admin", // ✅ rol por defecto permitido
+            creado: new Date(),
+          };
+          await setDoc(ref, newUser);
+          setDbUser(newUser);
+          setRol(newUser.rol);
+        } else {
+          const data = snap.data() as DBUser;
+          setDbUser(data);
+          setRol(data.rol ?? null);
+        }
+      } catch (e) {
+        console.error("Error cargando DBUser:", e);
         setDbUser(null);
         setRol(null);
-        return;
-      }
-
-      const { data, error } = await supabase
-        .from("usuario")
-        .select("*")
-        .eq("auth_user_id", user.id)
-        .single();
-
-      if (error) {
-        console.error("Error obteniendo usuario de DB:", error);
-        setDbUser(null);
-        setRol(null);
-      } else {
-        setDbUser(data);
-        setRol(data.rol || null);
       }
     };
 
-    fetchDbUser();
+    fetchOrCreateDbUser();
   }, [user]);
 
   // Cerrar sesión
   const signOut = async () => {
-    await supabase.auth.signOut();
-    setSession(null);
+    await firebaseSignOut();
     setUser(null);
     setDbUser(null);
     setRol(null);
@@ -88,34 +93,26 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   // Iniciar sesión con Google
   const signInWithGoogle = async () => {
-    const { error } = await supabase.auth.signInWithOAuth({
-      provider: "google",
-    });
-    if (error) console.error("Error al iniciar sesión con Google:", error);
+    try {
+      await signInWithPopup(auth, provider);
+    } catch (e) {
+      console.error("Error al iniciar sesión con Google:", e);
+    }
   };
 
   return (
     <AuthContext.Provider
-      value={{
-        session,
-        user,
-        dbUser,
-        rol,
-        loading,
-        signOut,
-        signInWithGoogle,
-      }}
+      value={{ user, dbUser, rol, loading, signOut, signInWithGoogle }}
     >
       {children}
     </AuthContext.Provider>
   );
 }
 
-// Hook para consumir el contexto
 export const useAuth = () => {
-  const context = useContext(AuthContext);
-  if (!context) {
-    throw new Error("useAuth debe usarse dentro de un <AuthProvider>");
+  const ctx = useContext(AuthContext);
+  if (!ctx) {
+    throw new Error("useAuth debe usarse dentro de <AuthProvider>");
   }
-  return context;
+  return ctx;
 };

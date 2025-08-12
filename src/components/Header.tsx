@@ -1,70 +1,52 @@
 // src/components/Header.tsx
-import { useEffect, useRef, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { Link, NavLink } from "react-router-dom";
 import { useAuth } from "@/auth/AuthContext";
-import { useHasClub } from "@/hooks/useHasClub"; // club
-import { supabase } from "@/lib/supabase";       // productor
+import { useHasClub } from "@/hooks/useHasClub";
+import { doc, getDoc } from "firebase/firestore";
+import { db } from "@/lib/firebase";
+import {
+  Home,
+  PlusCircle,
+  Shield,
+  Users,
+  Building2,
+  LogIn,
+  CalendarPlus,
+  Briefcase,
+  UserPlus,
+  LogOut,
+  User2,
+} from "lucide-react";
 
 export default function Header() {
   const { user, dbUser, signOut } = useAuth();
-
   const [open, setOpen] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
-
   const { loading: loadingClub, hasClub } = useHasClub();
-  const [hasProducer, setHasProducer] = useState<boolean>(false);
+  const [hasProducer, setHasProducer] = useState(false);
 
-  // Estado de solicitud (para alternar "Solicitud de acceso" / "Estado de solicitud")
-  const [solicitudEstado, setSolicitudEstado] = useState<string | null>(null);
-  const [solicitudEnviadaAt, setSolicitudEnviadaAt] = useState<string | null>(null);
-
-  const avatar =
-    dbUser?.foto ||
-    (user?.user_metadata?.picture as string | undefined) ||
-    (user?.user_metadata?.avatar_url as string | undefined) ||
-    "";
-
-  const name =
-    dbUser?.nombre ||
-    (user?.user_metadata?.full_name as string | undefined) ||
-    user?.email ||
-    "Usuario";
-
-  type Role = "admin" | "club_owner" | "productor" | "user";
-  const roleExtra = (dbUser as any)?.rol_extra as Role | undefined;
-  const hasRole = (r: Role) => dbUser?.rol === r || roleExtra === r;
+  function hasRole(r: "admin" | "club_owner" | "productor" | "user") {
+    if (!dbUser) return false;
+    return dbUser.rol === r || dbUser.rol_extra === r;
+  }
 
   const isAdmin = hasRole("admin");
   const isClubOwner = hasRole("club_owner");
   const isProductor = hasRole("productor");
-  const canCreateEvent =
-    !!dbUser?.can_create_event || isAdmin || isClubOwner || isProductor;
+  const canCreateEvent = !!dbUser?.can_create_event || isAdmin || isClubOwner || isProductor;
+  const shouldShowRoleRequest = !!user && !isAdmin && !isClubOwner && !isProductor;
 
-  // Mostrar "Solicitud de acceso" si NO tiene roles elevados y NO ha enviado solicitud.
-  const shouldShowRoleRequest =
-    !!user &&
-    !isAdmin &&
-    !isClubOwner &&
-    !isProductor &&
-    !solicitudEnviadaAt;
-
-  // Mostrar "Estado de solicitud" si envió solicitud y aún no tiene roles elevados
-  const shouldShowRoleStatus =
-    !!user && !isAdmin && !isClubOwner && !isProductor && !!solicitudEnviadaAt;
-
-  // Cerrar menús en click afuera o ESC
   useEffect(() => {
     function onDocClick(e: MouseEvent) {
       if (!open) return;
-      if (!containerRef.current) return;
-      if (!containerRef.current.contains(e.target as Node)) setOpen(false);
+      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
+        setOpen(false);
+      }
     }
     function onEsc(e: KeyboardEvent) {
-      if (e.key === "Escape") {
-        setOpen(false);
-        setMobileOpen(false);
-      }
+      if (e.key === "Escape") setOpen(false);
     }
     document.addEventListener("mousedown", onDocClick);
     document.addEventListener("keydown", onEsc);
@@ -74,162 +56,133 @@ export default function Header() {
     };
   }, [open]);
 
-  // Carga id_usuario + solicitud y existencia de productora
+  useEffect(() => {
+    function handleClickOutside(event: MouseEvent) {
+      const headerElement = document.querySelector("header");
+      if (mobileOpen && headerElement && !headerElement.contains(event.target as Node)) {
+        setMobileOpen(false);
+      }
+    }
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, [mobileOpen]);
+
+  useEffect(() => {
+    document.body.style.overflow = mobileOpen ? "hidden" : "auto";
+  }, [mobileOpen]);
+
   useEffect(() => {
     let active = true;
     (async () => {
       if (!user) return;
-
-      const { data: u } = await supabase
-        .from("usuario")
-        .select("id_usuario, solicitud_estado, solicitud_enviada_at")
-        .eq("auth_user_id", user.id)
-        .single();
-
-      if (!active || !u) return;
-
-      setSolicitudEstado(u.solicitud_estado ?? null);
-      setSolicitudEnviadaAt(u.solicitud_enviada_at ?? null);
-
-      const { data: p } = await supabase
-        .from("productor")
-        .select("id_productor")
-        .eq("id_usuario", u.id_usuario)
-        .maybeSingle();
-
-      if (!active) return;
-      setHasProducer(!!p);
+      const ref = doc(db, "productoras", user.uid);
+      const snap = await getDoc(ref);
+      if (active) setHasProducer(snap.exists());
     })();
     return () => {
       active = false;
     };
   }, [user]);
 
-  // Evitar parpadeo mientras carga dbUser
   if (!dbUser && user) return null;
 
+  function MobileNavItem({ to, children, icon }: { to: string; children: React.ReactNode; icon?: React.ReactNode }) {
+    const handleClick = () => setMobileOpen(false);
+    return (
+      <NavLink
+        to={to}
+        onClick={handleClick}
+        className={({ isActive }) =>
+          `flex items-center gap-2 px-3 py-2 rounded ${
+            isActive ? "bg-[#8e2afc]/20 text-[#8e2afc]" : "text-white/80 hover:bg-white/5"
+          }`
+        }
+      >
+        {icon} {children}
+      </NavLink>
+    );
+  }
+
   return (
-    <header className="sticky top-0 z-[60] w-full bg-black/70 backdrop-blur border-b border-white/10">
+    <header className="fixed top-0 left-0 w-full z-50 bg-zinc-900 backdrop-blur border-b border-white/10">
       <div className="w-full px-4 h-14 flex items-center justify-between overflow-visible">
-        {/* Logo */}
         <div className="flex items-center gap-3">
           <Link to="/" className="text-white font-extrabold text-lg">
             Go<span className="text-[#8e2afc]">Up</span>
           </Link>
 
-          {/* Navegación desktop */}
           <nav className="hidden md:flex items-center gap-4 ml-6 text-sm">
-            <NavItem to="/">Inicio</NavItem>
-
-            {/* Club: alterna Crear club / Mi club */}
-            {(isClubOwner || isAdmin) && !loadingClub && (
+            <NavItem to="/inicio" icon={<Home className="w-4 h-4" />}>Inicio</NavItem>
+            {isClubOwner && !loadingClub && (
               hasClub ? (
-                <NavItem to="/dashboard/mi-club">Mi club</NavItem>
+                <NavItem to="/dashboard/mi-club" icon={<Building2 className="w-4 h-4" />}>Mi club</NavItem>
               ) : (
-                <NavItem to="/club/crear">Crear club</NavItem>
+                <NavItem to="/club/crear" icon={<Building2 className="w-4 h-4" />}>Crear club</NavItem>
               )
             )}
-
-            {/* Productora: alterna Crear / Mi productora */}
-            {(isProductor || isAdmin) &&
-              (hasProducer ? (
-                <NavItem to="/dashboard/productora">Mi productora</NavItem>
+            {(isProductor || isAdmin) && (
+              hasProducer ? (
+                <NavItem to="/dashboard/productora" icon={<Briefcase className="w-4 h-4" />}>Mi productora</NavItem>
               ) : (
-                <NavItem to="/productora/crear">Crear productora</NavItem>
-              ))}
-
-            {/* Solicitud acceso / Estado solicitud */}
+                <NavItem to="/productora/crear" icon={<Briefcase className="w-4 h-4" />}>Crear productora</NavItem>
+              )
+            )}
             {shouldShowRoleRequest && (
-              <NavItem to="/solicitud-acceso">Solicitud de acceso</NavItem>
+              <NavItem to="/solicitud-acceso" icon={<UserPlus className="w-4 h-4" />}>Solicitud de acceso</NavItem>
             )}
-            {shouldShowRoleStatus && (
-              <NavItem to="/solicitud-estado">Estado de solicitud</NavItem>
-            )}
-
-            {/* Mis eventos */}
             {(isProductor || isAdmin || isClubOwner) && (
-              <NavItem to="/mis-eventos">Mis eventos</NavItem>
+              <NavItem to="/mis-eventos" icon={<CalendarPlus className="w-4 h-4" />}>Mis eventos</NavItem>
             )}
-
-            {canCreateEvent && <NavItem to="/evento/crear">Crear evento</NavItem>}
-            {isAdmin && <NavItem to="/admin">Admin</NavItem>}
+            {canCreateEvent && (
+              <NavItem to="/evento/crear" icon={<PlusCircle className="w-4 h-4" />}>Crear evento</NavItem>
+            )}
+            {isAdmin && <NavItem to="/admin" icon={<Shield className="w-4 h-4" />}>Admin</NavItem>}
+            {isAdmin && <NavItem to="/club/crear" icon={<Building2 className="w-4 h-4" />}>Crear club</NavItem>}
+            {isAdmin && <NavItem to="/adminClub" icon={<Users className="w-4 h-4" />}>Clubes Admin</NavItem>}
           </nav>
         </div>
 
-        {/* Acciones derecha */}
         <div className="flex items-center gap-3">
           {!user && (
-            <Link
-              to="/login"
-              className="hidden md:inline-block px-3 py-1.5 rounded-md bg-[#8e2afc] text-white text-sm hover:opacity-90"
-            >
-              Iniciar sesión
+            <Link to="/login" className="hidden md:inline-block px-3 py-1.5 rounded-md bg-[#8e2afc] text-white text-sm hover:opacity-90">
+              <LogIn className="inline w-4 h-4 mr-1" /> Iniciar sesión
             </Link>
           )}
 
           {user && (
             <div className="relative" ref={containerRef}>
-              <button
-                aria-label={open ? "Cerrar menú de usuario" : "Abrir menú de usuario"}
-                aria-haspopup="menu"
-                aria-expanded={open}
-                onClick={() => setOpen((o) => !o)}
-                className="w-9 h-9 rounded-full overflow-hidden border border-white/20"
-              >
-                {avatar ? (
-                  <img
-                    src={avatar}
-                    alt={name}
-                    className="w-full h-full object-cover"
-                    referrerPolicy="no-referrer"
-                  />
+              <button onClick={() => setOpen(o => !o)} className="w-9 h-9 rounded-full overflow-hidden border border-white/20">
+                {dbUser?.photo_url ? (
+                  <img src={dbUser.photo_url} alt={dbUser.nombre || user.email!} className="w-full h-full object-cover" />
                 ) : (
                   <span className="w-full h-full flex items-center justify-center bg-white/10 text-white text-sm">
-                    {name[0]}
+                    {(dbUser?.nombre ?? user.email!)?.[0]}
                   </span>
                 )}
               </button>
 
               {open && (
-                <div
-                  role="menu"
-                  className="absolute right-0 mt-2 z-[70] w-56 rounded-md bg-neutral-900 border border-white/10 shadow-lg text-sm text-white"
-                >
+                <div className="absolute z-[70] right-0 top-full mt-2 w-48 bg-neutral-900 border border-white/10 rounded-md shadow-xl">
                   <div className="px-3 py-2 border-b border-white/10">
-                    <p className="font-semibold truncate">{name}</p>
-                    <p className="text-white/60 truncate">{user?.email}</p>
+                    <p className="font-semibold truncate">{dbUser?.nombre}</p>
+                    <p className="text-white/60 truncate">{user.email}</p>
                   </div>
-
                   <ul className="py-1">
                     <li>
-                      <Link
-                        to="/perfil"
-                        className="block px-3 py-2 hover:bg-white/5"
-                        onClick={() => setOpen(false)}
-                      >
-                        Mi perfil
+                      <Link to="/perfil" className="block px-3 py-2 hover:bg-white/5" onClick={() => setOpen(false)}>
+                        <User2 className="inline w-4 h-4 mr-1" /> Mi perfil
                       </Link>
                     </li>
                     {isAdmin && (
                       <li>
-                        <Link
-                          to="/admin"
-                          className="block px-3 py-2 hover:bg-white/5"
-                          onClick={() => setOpen(false)}
-                        >
-                          Panel admin
+                        <Link to="/admin" className="block px-3 py-2 hover:bg-white/5" onClick={() => setOpen(false)}>
+                          <Shield className="inline w-4 h-4 mr-1" /> Panel admin
                         </Link>
                       </li>
                     )}
                     <li>
-                      <button
-                        className="w-full text-left px-3 py-2 hover:bg-white/5"
-                        onClick={() => {
-                          setOpen(false);
-                          signOut();
-                        }}
-                      >
-                        Cerrar sesión
+                      <button className="w-full text-left px-3 py-2 rounded hover:bg-white/5 text-white/80" onClick={() => { signOut(); setMobileOpen(false); }}>
+                        <LogOut className="inline w-4 h-4 mr-1" /> Cerrar sesión
                       </button>
                     </li>
                   </ul>
@@ -238,148 +191,71 @@ export default function Header() {
             </div>
           )}
 
-          {!user && (
-            <Link
-              to="/login"
-              className="md:hidden inline-flex items-center justify-center px-3 py-1.5 rounded-md bg-[#8e2afc] text-white text-sm hover:opacity-90"
-            >
-              Login
-            </Link>
-          )}
-
-          {/* Botón móvil ☰ Menú  / ✕ Cerrar */}
-          <button
-            className="md:hidden text-white px-2 py-1.5 inline-flex items-center gap-2 border border-white/10 rounded-md"
-            onClick={() => setMobileOpen((m) => !m)}
-            aria-label={mobileOpen ? "Cerrar menú" : "Abrir menú"}
-            aria-expanded={mobileOpen}
-          >
-            <span className="text-2xl leading-none">{mobileOpen ? "✕" : "☰"}</span>
-            <span className="text-sm">{mobileOpen ? "Cerrar" : "Menú"}</span>
+          <button className="md:hidden text-white text-2xl px-2 flex items-center" onClick={() => setMobileOpen(m => !m)}>
+            ☰ <span className="ml-1 text-sm">Menú</span>
           </button>
         </div>
       </div>
 
-      {/* Menú mobile */}
       {mobileOpen && (
-        <div className="md:hidden border-t border-white/10 bg-black/90">
-          <nav className="px-4 py-3 space-y-2 text-sm">
-            <MobileNavItem to="/" onClick={() => setMobileOpen(false)}>
-              Inicio
-            </MobileNavItem>
-
-            {/* Club (mobile): alterna */}
-            {(isClubOwner || isAdmin) && !loadingClub && (
-              hasClub ? (
-                <MobileNavItem to="/dashboard/mi-club" onClick={() => setMobileOpen(false)}>
-                  Mi club
-                </MobileNavItem>
-              ) : (
-                <MobileNavItem to="/club/crear" onClick={() => setMobileOpen(false)}>
-                  Crear club
-                </MobileNavItem>
-              )
-            )}
-
-            {/* Productora (mobile): alterna */}
-            {(isProductor || isAdmin) &&
-              (hasProducer ? (
-                <MobileNavItem to="/dashboard/productora" onClick={() => setMobileOpen(false)}>
-                  Mi productora
-                </MobileNavItem>
-              ) : (
-                <MobileNavItem to="/productora/crear" onClick={() => setMobileOpen(false)}>
-                  Crear productora
-                </MobileNavItem>
-              ))}
-
-            {/* Solicitud / Estado */}
-            {shouldShowRoleRequest && (
-              <MobileNavItem to="/solicitud-acceso" onClick={() => setMobileOpen(false)}>
-                Solicitud de acceso
-              </MobileNavItem>
-            )}
-            {shouldShowRoleStatus && (
-              <MobileNavItem to="/solicitud-estado" onClick={() => setMobileOpen(false)}>
-                Estado de solicitud
-              </MobileNavItem>
-            )}
-
-            {(isProductor || isAdmin || isClubOwner) && (
-              <MobileNavItem to="/mis-eventos" onClick={() => setMobileOpen(false)}>
-                Mis eventos
-              </MobileNavItem>
-            )}
-
-            {canCreateEvent && (
-              <MobileNavItem to="/evento/crear" onClick={() => setMobileOpen(false)}>
-                Crear evento
-              </MobileNavItem>
-            )}
-
-            {isAdmin && (
-              <MobileNavItem to="/admin" onClick={() => setMobileOpen(false)}>
-                Admin
-              </MobileNavItem>
-            )}
-
-            {user && (
-              <>
-                <div className="h-px bg-white/10 my-2" />
-                <MobileNavItem to="/perfil" onClick={() => setMobileOpen(false)}>
-                  Mi perfil
-                </MobileNavItem>
-                <button
-                  className="w-full text-left px-3 py-2 rounded hover:bg-white/5 text-white/80"
-                  onClick={() => {
-                    setMobileOpen(false);
-                    signOut();
-                  }}
-                >
-                  Cerrar sesión
-                </button>
-              </>
-            )}
-          </nav>
+        <div className="fixed z-40 flex">
+          <div className="fixed inset-0 bg-black opacity-50 z-40" onClick={() => setMobileOpen(false)} />
+          <div className="relative z-50 w-72 max-w-xs bg-zinc-900 text-white p-4 shadow-lg animate-slide-in" onClick={(e) => e.stopPropagation()}>
+            <div className="flex justify-between items-center mb-4">
+              <span className="text-lg font-bold">Menú</span>
+              <button className="text-white text-2xl" onClick={() => setMobileOpen(false)}>✕</button>
+            </div>
+            <nav className="space-y-2 text-sm">
+              <MobileNavItem to="/inicio" icon={<Home className="w-4 h-4" />}>Inicio</MobileNavItem>
+              {isClubOwner && !loadingClub && (
+                hasClub ? (
+                  <MobileNavItem to="/dashboard/mi-club" icon={<Building2 className="w-4 h-4" />}>Mi club</MobileNavItem>
+                ) : (
+                  <MobileNavItem to="/club/crear" icon={<Building2 className="w-4 h-4" />}>Crear club</MobileNavItem>
+                )
+              )}
+              {(isProductor || isAdmin) && (
+                hasProducer ? (
+                  <MobileNavItem to="/dashboard/productora" icon={<Briefcase className="w-4 h-4" />}>Mi productora</MobileNavItem>
+                ) : (
+                  <MobileNavItem to="/productora/crear" icon={<Briefcase className="w-4 h-4" />}>Crear productora</MobileNavItem>
+                )
+              )}
+              {shouldShowRoleRequest && <MobileNavItem to="/solicitud-acceso" icon={<UserPlus className="w-4 h-4" />}>Solicitud de acceso</MobileNavItem>}
+              {(isProductor || isAdmin || isClubOwner) && <MobileNavItem to="/mis-eventos" icon={<CalendarPlus className="w-4 h-4" />}>Mis eventos</MobileNavItem>}
+              {canCreateEvent && <MobileNavItem to="/evento/crear" icon={<PlusCircle className="w-4 h-4" />}>Crear evento</MobileNavItem>}
+              {isAdmin && <MobileNavItem to="/club/crear" icon={<Building2 className="w-4 h-4" />}>Crear club</MobileNavItem>}
+              {isAdmin && <MobileNavItem to="/admin" icon={<Shield className="w-4 h-4" />}>Admin</MobileNavItem>}
+              {isAdmin && <MobileNavItem to="/adminClub" icon={<Users className="w-4 h-4" />}>Clubes Admin</MobileNavItem>}
+              {(!user || !isProductor || !isAdmin || !isClubOwner) && <MobileNavItem to="/login" icon={<Users className="w-4 h-4" />}>Ingresar</MobileNavItem>}
+              {user && (
+                <>
+                  <div className="h-px bg-white/10 my-2" />
+                  <MobileNavItem to="/perfil" icon={<User2 className="w-4 h-4" />}>Mi perfil</MobileNavItem>
+                  <button className="w-full text-left px-3 py-2 rounded hover:bg-white/5 text-white/80 flex items-center gap-2" onClick={signOut}>
+                    <LogOut className="w-4 h-4" /> Cerrar sesión
+                  </button>
+                </>
+              )}
+            </nav>
+          </div>
         </div>
       )}
     </header>
   );
 }
 
-function NavItem({ to, children }: { to: string; children: React.ReactNode }) {
+function NavItem({ to, children, icon }: { to: string; children: React.ReactNode; icon?: React.ReactNode }) {
   return (
     <NavLink
       to={to}
       className={({ isActive }) =>
-        `px-2 py-1 rounded ${isActive ? "text-[#8e2afc]" : "text-white/80 hover:text-white"}`
+        `relative px-2 py-1 rounded flex items-center gap-1 transition-all duration-200 ${
+          isActive ? "text-[#8e2afc]" : "text-white/80 hover:text-white"
+        } after:content-[''] after:absolute after:-bottom-1 after:left-0 after:w-0 after:h-0.5 after:bg-[#8e2afc] hover:after:w-full after:transition-all after:duration-300`
       }
     >
-      {children}
-    </NavLink>
-  );
-}
-
-function MobileNavItem({
-  to,
-  children,
-  onClick,
-}: {
-  to: string;
-  children: React.ReactNode;
-  onClick?: () => void;
-}) {
-  return (
-    <NavLink
-      to={to}
-      onClick={onClick}
-      className={({ isActive }) =>
-        `block px-3 py-2 rounded ${
-          isActive ? "bg-[#8e2afc]/20 text-[#8e2afc]" : "text-white/80 hover:bg-white/5"
-        }`
-      }
-    >
-      {children}
+      {icon} {children}
     </NavLink>
   );
 }

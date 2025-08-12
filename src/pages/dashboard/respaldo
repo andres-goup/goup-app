@@ -1,580 +1,367 @@
-
-// src/pages/Event.tsx
-import React, { useState } from "react";
-import {
-  useForm,
-  FormProvider,
-  type FieldError,
-  type FieldPath,
-  type FieldErrors,
-  type FieldValues,
-  type Resolver,
-  useFormContext,
-} from "react-hook-form";
+/* ✅ Versión mejorada y estilizada de ProfilePage.tsx con tarjetas visuales, botones consistentes y etiquetas
+import MenuItem from "@mui/material/MenuItem";
+import React, { useEffect, useMemo, useRef, useState } from "react";
+import { FormProvider, useForm } from "react-hook-form";
 import { z } from "zod";
 import { zodResolver } from "@hookform/resolvers/zod";
 import toast from "react-hot-toast";
-import { motion, AnimatePresence } from "framer-motion";
-import logo from "@/assets/goup_logo.png"
-import { eventSchema } from "@/lib/schemas"; // ⬅️ ajusta la ruta si es distinta
-import { useStepper } from "@/hooks/useStepper";
-import { supabase } from "@/lib/supabase";
-import { useNavigate } from "react-router-dom";
-import { LineupFields } from "@/components/form/LineupFields";
-
-
-// **Solo estos controles compartidos** (son simples inputs, no genéricos en JSX)
 import {
-  RHFInput,
-  RHFTextarea,
-  RHFSelect,
-  RHFCheckboxGroup,
-  RHFFile,
-  StepErrorBanner, // este acepta { errors: string[] }
-} from "@/components/form/control"; // ⬅️ ajusta ruta si cambia
+  doc,
+  getDoc,
+  setDoc,
+  updateDoc,
+  collection,
+  query,
+  where,
+  getDocs,
+  Firestore,
+} from "firebase/firestore";
+import {
+  getStorage,
+  ref as storageRef,
+  uploadBytes,
+  getDownloadURL,
+} from "firebase/storage";
+import { updateProfile } from "firebase/auth";
+import { useFormContext } from "react-hook-form";
+import { useAuth } from "@/auth/AuthContext";
+import { db as firebaseDb, auth as firebaseAuth } from "@/lib/firebase";
 
-/* =========================================================
- * Tipos locales (NO afectan a otras páginas)
- * =======================================================*/
-export type EventFormValues = z.infer<typeof eventSchema>;
-type Keys = FieldPath<EventFormValues>;
+import { RHFInput, RHFFile } from "@/components/form/control";
+import RHFSelect from "@/components/form/control/RHFSelect";
+import ModalConfirm from "@/components/ModalConfirm";
+import goupLogo from "@/assets/goup_logo.png";
 
+const profileSchema = z.object({
+  nombre: z.string().min(1, "El nombre es obligatorio"),
+  phone_number: z.string().optional().or(z.literal("")),
+  rut: z.string().optional().or(z.literal("")),
+  direccion: z.string().optional().or(z.literal("")),
+  sexo: z.string().optional().or(z.literal("")),
+  fecha_nacimiento: z.string().optional().or(z.literal("")),
+  photo_url: z.any().optional().nullable(),
+});
 
+type ProfileForm = z.infer<typeof profileSchema>;
 
-/* =========================================================
- * Defaults alineados al schema
- * =======================================================*/
-const defaultEventValues: EventFormValues = {
-  nombre: "",
-  tipo: "",
-  fecha: "",
-  horaInicio: "",
-  horaCierre: "",
-  capacidad: "",
-  presupuesto: "",
-  promotor: "",
-  telefono: "",
-  email: "",
-  desc: "",
-  generos: [],
-  flyer: null,
-  imgSec: null,
-  edadMinima: 18,
-  tieneVip: false,
-  cantidadZonasVip: "",
-  aceptaReservas: false,
-  tieneLineup: false,
-  cantidadDJs: "",
-  djs: [],
-  codigoVestimenta: "",
-};
+export default function ProfilePage() {
+  const { user, dbUser, loading: authLoading, signOut } = useAuth();
+  const [loadingPage, setLoadingPage] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [editMode, setEditMode] = useState(false);
+  const [confirmOpen, setConfirmOpen] = useState(false);
+  const [record, setRecord] = useState<any>(null);
+  const originalRef = useRef<ProfileForm | null>(null);
+  const [totalEventos, setTotalEventos] = useState(0);
+  const [realizados, setRealizados] = useState(0);
 
-
-  // Otros campos si tienes más...
-
-const generosMusicales = [
-  "Reguetón",
-  "Techno",
-  "House",
-  "Pop",
-  "Salsa",
-  "Hardstyle",
-  "Trance",
-  "Hip-Hop",
-  "Urbano",
-] as const;
-
-/* =========================================================
- * Helpers locales
- * =======================================================*/
-function isFieldError(v: unknown): v is FieldError {
-  return typeof v === "object" && v !== null && "message" in (v as Record<string, unknown>);
-}
-
-/** Aplana el objeto de errores de RHF a { "a.b.c": "mensaje" } */
-function flattenErrors<T extends FieldValues>(
-  obj: FieldErrors<T>,
-  prefix: FieldPath<T> | "" = ""
-): Record<FieldPath<T>, string> {
-  const out: Partial<Record<FieldPath<T>, string>> = {};
-
-  for (const [k, v] of Object.entries(obj)) {
-    const key = (prefix ? `${prefix}.${k}` : k) as FieldPath<T>;
-
-    if (isFieldError(v) && typeof v.message === "string") {
-      out[key] = v.message;
-    } else if (v && typeof v === "object") {
-      const nested = flattenErrors<T>(v as FieldErrors<T>, key);
-      Object.assign(out, nested);
-    }
-  }
-
-  return out as Record<FieldPath<T>, string>;
-}
-
-/** Devuelve solo los mensajes de los campos visibles del paso */
-function collectStepErrors<T extends FieldValues>(
-  errors: FieldErrors<T>,
-  fields: FieldPath<T>[]
-): string[] {
-  const flat = flattenErrors<T>(errors);
-  const msgs: string[] = [];
-  for (const f of fields) {
-    const err = flat[f];
-    if (err) msgs.push(err);
-  }
-  return msgs;
-}
-/* =========================================================
- * UI locales (para no depender de tipos ajenos)
- * =======================================================*/
-function StepDots({ step, total }: { step: number; total: number }) {
-  return (
-    <div className="flex items-center justify-center gap-2">
-      {Array.from({ length: total }).map((_, i) => (
-        <span
-          key={i}
-          className={`h-2 w-2 rounded-full ${
-            i === step ? "bg-[#8e2afc]" : "bg-white/20"
-          }`}
-        />
-      ))}
-    </div>
-  );
-}
-
-type LoadingButtonProps = React.ButtonHTMLAttributes<HTMLButtonElement> & {
-  loading?: boolean;
-  variant?: "solid" | "outline";
-};
-function LoadingButton({
-  loading,
-  variant = "solid",
-  children,
-  className = "",
-  ...rest
-}: LoadingButtonProps) {
-  const base =
-    "inline-flex items-center justify-center rounded-md px-4 py-2 text-sm font-medium transition disabled:opacity-50";
-  const styles =
-    variant === "outline"
-      ? "border border-white/20 bg-transparent hover:bg-white/10"
-      : "bg-[#8e2afc] hover:bg-[#7b1fe0]";
-  return (
-    <button className={`${base} ${styles} ${className}`} disabled={loading} {...rest}>
-      {loading ? "..." : children}
-    </button>
-  );
-}
-
-function LocalCard({
-  title,
-  children,
-}: {
-  title: string;
-  children: React.ReactNode;
-}) {
-  return (
-    <section className="space-y-4">
-      <h2 className="text-2xl font-extrabold tracking-tight text-[#8e2afc] flex items-center gap-2">
-        {title}
-      </h2>
-      <div className="space-y-4">{children}</div>
-    </section>
-  );
-}
-
-function SuccessModal({
-  open,
-  title,
-  subtitle,
-  onClose,
-}: {
-  open: boolean;
-  title: string;
-  subtitle?: string;
-  onClose: () => void;
-}) {
-  if (!open) return null;
-  return (
-    <div className="fixed inset-0 z-50 grid place-items-center bg-black/60 backdrop-blur-sm">
-      <div className="max-w-md rounded-md bg-neutral-900 p-6 text-center shadow-lg">
-        <h2 className="mb-2 text-2xl font-semibold text-green-400">{title}</h2>
-        {subtitle && <p className="text-white/70">{subtitle}</p>}
-        <button
-          className="mt-6 rounded bg-[#8e2afc] px-4 py-2 text-sm font-medium hover:bg-[#7b1fe0]"
-          onClick={onClose}
-        >
-          Cerrar
-        </button>
-      </div>
-    </div>
-  );
-}
-
-/* =========================================================
- * Página
- * =======================================================*/
-export default function EventPage() {
-  return <EventWizard />;
-}
-
-function EventWizard() {
-  const methods = useForm<EventFormValues>({
-    resolver: zodResolver(eventSchema) as unknown as Resolver<EventFormValues>,
-    defaultValues: defaultEventValues,
+  const methods = useForm<ProfileForm>({
+    resolver: zodResolver(profileSchema),
+    defaultValues: undefined,
     mode: "onChange",
   });
 
-  
-
-  const [loadingStep, setLoadingStep] = useState(false);
-  const [stepErrors, setStepErrors] = useState<string[]>([]);
-  const [sent, setSent] = useState(false);
-
-  const steps = useSteps();
-  const { current, total, next, prev } = useStepper(steps);
-
-  // Campos por paso
-  const stepFields: Keys[][] = [
-    ["nombre", "tipo"], // 0
-    ["fecha", "horaInicio", "horaCierre"], // 1
-    ["capacidad"], // 2
-    ["promotor", "telefono", "email"], // 3
-    ["desc", "generos"], // 4
-    ["flyer", "imgSec"], // 5
-    [], // 6 - review
-  ];
-  const navigate = useNavigate();
-  const onSubmitStep = async () => {
-   
-  
-    const fields = stepFields[current];
-    const ok = await methods.trigger(fields, { shouldFocus: true });
-
-    if (!ok) {
-      const msgs = collectStepErrors(methods.formState.errors, fields);
-      setStepErrors(msgs);
-      toast.error(msgs[0] ?? "Corrige los campos para continuar.");
-      setLoadingStep(false);
-      return;
-    }
-
-    setStepErrors([]);
-    toast.success("Paso guardado ✅");
-    next();
-    setLoadingStep(false);
-    setTimeout(() => window.scrollTo({ top: 0, behavior: "smooth" }), 0);
-  };
-
-  const onSubmitFinal = async (data: EventFormValues) => {
-    
-    if (sent) return;
-
-  try {
-    setLoadingStep(true);
-  
-      // Paso 1: obtener usuario autenticado
-      const {
-        data: { user },
-      } = await supabase.auth.getUser();
-      if (!user) throw new Error("No estás autenticado");
-  
-      // Paso 2: obtener id_usuario
-      const { data: usuarioData, error: usuarioError } = await supabase
-        .from("usuario")
-        .select("id_usuario")
-        .eq("auth_user_id", user.id)
-        .single();
-  
-      if (usuarioError || !usuarioData) {
-        throw new Error("No se encontró tu perfil en la tabla usuario");
+  useEffect(() => {
+    (async () => {
+      if (authLoading) return;
+      if (!user?.uid) {
+        setLoadingPage(false);
+        return;
       }
+      try {
+        const userRef = doc(firebaseDb as Firestore, "usersWeb", user.uid);
+        const snap = await getDoc(userRef);
+        const data = snap.exists()
+          ? snap.data()
+          : {
+              uid: user.uid,
+              email: user.email,
+              nombre: user.displayName,
+              phone_number: "",
+              rut: "",
+              direccion: "",
+              sexo: "",
+              fecha_nacimiento: "",
+              photo_url: user.photoURL,
+            };
+        setRecord(data);
+        const defaults: ProfileForm = {
+          nombre: data.nombre ?? "",
+          phone_number: data.phone_number ?? "",
+          rut: data.rut ?? "",
+          direccion: data.direccion ?? "",
+          sexo: typeof data.sexo === "string" ? data.sexo : "",
+          fecha_nacimiento: data.fecha_nacimiento?.seconds
+            ? new Date(data.fecha_nacimiento.seconds * 1000)
+                .toISOString()
+                .split("T")[0]
+            : data.fecha_nacimiento ?? "",
+          photo_url: null,
+        };
+        console.log("🔍 SEXO desde Firestore:", data.sexo, typeof data.sexo);
+        methods.reset(defaults);
+        originalRef.current = defaults;
+      } catch (e) {
+        toast.error("No se pudo cargar tu perfil");
+      } finally {
+        setLoadingPage(false);
+      }
+    })();
+  }, [authLoading, user, methods]);
+
+  useEffect(() => {
+    (async () => {
+      if (!record?.uid) return;
+      const q = query(
+        collection(firebaseDb as Firestore, "Eventos"),
+        where("uid_usersWeb", "==", "/usersWeb/" + record.uid)
+      );
+      const snap = await getDocs(q);
+      const list = snap.docs.map((d) => d.data());
+      setTotalEventos(list.length);
+      const now = Date.now();
+      const pastCount = list.filter((ev) => {
+        const t = ev.horaCierre || ev.horaInicio || "00:00";
+        return now > new Date(${ev.fecha}T${t}).getTime();
+      }).length;
+      setRealizados(pastCount);
+    })();
+  }, [record]);
+
+  const avatarUrl = useMemo(() => record?.photo_url ?? "", [record]);
+
+  const uploadAvatar = async (file: File): Promise<string> => {
+    const storage = getStorage();
+    const ext = file.name.split(".").pop()?.toLowerCase() || "jpg";
+    const path = avatars/${user!.uid}/avatar.${ext};
+    const ref = storageRef(storage, path);
+    await uploadBytes(ref, file);
+    return await getDownloadURL(ref);
+  };
+
+  const handleCancel = () => {
+    if (originalRef.current) methods.reset(originalRef.current);
+    setEditMode(false);
+  };
+  function RHFCustomSelect({
+    name,
+    label,
+    options,
+  }: {
+    name: string;
+    label: string;
+    options: { value: string; label: string }[];
+  }) {
+    const {
+      register,
+      formState: { errors },
+    } = useFormContext();
   
-      const id_usuario = usuarioData.id_usuario;
-  
-      // Paso 3: subir imágenes a Supabase Storage y obtener URLs
-      const uploadImage = async (
-        file: File | null,
-        folder: string
-      ): Promise<string | null> => {
-        if (!file) return null;
-  
-        const filePath = `${folder}/${Date.now()}_${file.name}`;
-        const { error: uploadError } = await supabase.storage
-          .from("evento") // ← nombre del bucket
-          .upload(filePath, file, {
-            cacheControl: "3600",
-            upsert: false,
-          });
-  
-        if (uploadError) throw new Error(`Error al subir ${folder}: ${uploadError.message}`);
-  
-        const { data } = supabase.storage.from("evento").getPublicUrl(filePath);
-        return data.publicUrl;
+    return (
+      <div>
+        <label className="block text-white text-sm font-medium mb-1">
+          {label}
+        </label>
+        <select
+          {...register(name)}
+          className="bg-zinc-800 border border-zinc-600 text-white rounded-md px-3 py-2 w-full focus:outline-none focus:ring-2 focus:ring-[#8e2afc]"
+        >
+          <option value="">Selecciona una opción</option>
+          {options.map((opt) => (
+            <option key={opt.value} value={opt.value}>
+              {opt.label}
+            </option>
+          ))}
+        </select>
+        {errors[name] && (
+          <p className="text-red-500 text-sm mt-1">
+            {(errors[name] as any)?.message}
+          </p>
+        )}
+      </div>
+    );
+  }
+  const onConfirmSave = methods.handleSubmit(async (values) => {
+    if (!user?.uid || !record) return;
+    setSaving(true);
+    try {
+      let photoURL = record.photo_url;
+      if (values.photo_url instanceof File) {
+        photoURL = await uploadAvatar(values.photo_url);
+        await updateProfile(firebaseAuth.currentUser!, { photoURL });
+      }
+
+      const payload = {
+        ...record,
+        ...values,
+        sexo: values.sexo || record.sexo,
+        photo_url: photoURL,
       };
-  
-      const flyerUrl = await uploadImage(data.flyer, "flyer");
-      const imgSecUrl = await uploadImage(data.imgSec, "imgSec");
-  
-      // Paso 4: crear evento con URLs de imágenes
-      const { error: insertError } = await supabase.from("evento").insert([
-        {
-          ...data,
-          flyer: flyerUrl,
-          imgSec: imgSecUrl,
-          id_usuario,
-        },
-      ]);
-  
-      if (insertError) throw new Error(insertError.message);
-  
-      toast.success("¡Evento creado con éxito!");
-      setSent(true);
-      methods.reset(defaultEventValues);
-      setTimeout(() => navigate("/mis-eventos"), 2000);
-    } catch (err) {
-      toast.error((err as Error).message ?? "Error inesperado");
+
+      const userRef = doc(firebaseDb as Firestore, "usersWeb", user.uid);
+      const exists = (await getDoc(userRef)).exists();
+      exists ? await updateDoc(userRef, payload) : await setDoc(userRef, payload);
+
+      await updateProfile(firebaseAuth.currentUser!, { displayName: values.nombre });
+      setRecord(payload);
+      methods.reset({ ...values, photo_url: null });
+      originalRef.current = { ...values, photo_url: null };
+      toast.success("Perfil actualizado");
+      setEditMode(false);
+      setConfirmOpen(false);
+    } catch {
+      toast.error("No se pudo guardar");
     } finally {
-      setLoadingStep(false);
+      setSaving(false);
+    }
+  });
+
+  const displayName = record?.nombre || "Usuario";
+  const email = record?.email || "";
+  const futuros = Math.max(0, totalEventos - realizados);
+  const fechaNacimientoFormateada = record?.fecha_nacimiento?.seconds
+    ? new Date(record.fecha_nacimiento.seconds * 1000).toISOString().split("T")[0]
+    : record?.fecha_nacimiento || "";
+
+  const displayRol = (rol: string) => {
+    switch (rol) {
+      case "admin": return "Administrador";
+      case "club_owner": return "Administrador de Club";
+      case "productor": return "Administrador de Productora";
+      default: return "Usuario pendiente de evaluación";
     }
   };
+
+  if (loadingPage || !record) return <p className="text-white text-center mt-8">Cargando perfil...</p>;
 
   return (
-    <main className="relative min-h-screen text-white px-4 py-8 overflow-hidden">
+<main className="min-h-screen bg-black text-white">
+  <div className="relative md:h-48 overflow-hidden">
+    
+    <div className="absolute z-[5] inset-0 bg-gradient-to-r from-[#2a1454] via-[#381a63] to-[#8e2afc]" />
+    
    
-      <header className="max-w-3xl mx-auto space-y-2 mb-8 text-center">
-        <img src={logo} alt="GoUp" className="mx-auto w-28" />
-        <h1 className="text-3xl md:text-4xl font-extrabold">
-          CREAR <span className="text-[#8e2afc]">EVENTO</span> NOCTURNO
-        </h1>
-        <p className="text-white/70">
-          Organiza la experiencia nocturna perfecta con GoUp
-        </p>
-      </header>
+    <div
+      className="absolute z-[5] inset-0 opacity-[0.08] mix-blend-overlay"
+      style={{
+        backgroundImage: url(${goupLogo}),
+        backgroundRepeat: "repeat",
+        backgroundSize: "80px 80px",
+        backgroundPosition: "center",
+      }}
+    />
+  </div>
 
-      <FormProvider {...methods}>
-  <form
-    onSubmit={(e) => {
-      e.preventDefault(); // evitar submit por Enter
-      if (current === total - 1) {
-        methods.handleSubmit(onSubmitFinal)();
-      } else {
-        onSubmitStep();
-      }
-    }}
-    onKeyDown={(e) => {
-      if (e.key === "Enter") e.preventDefault();
-    }}
-    className="max-w-3xl mx-auto space-y-8 mt-8"
-    noValidate
-  >
-    <StepDots step={current} total={total} />
-    <StepErrorBanner errors={stepErrors} />
+      <div className="max-w-3xl mx-auto px-4 -mt-12 relative z-10 flex items-end justify-between">
+        <div className="flex items-center gap-4">
+          <div className="h-28 w-28 rounded-full overflow-hidden border-4 border-[#8e2afc] bg-white/10">
+            {avatarUrl ? (
+              <img src={avatarUrl} alt={displayName} className="w-full h-full object-cover" />
+            ) : (
+              <div className="grid place-items-center h-full text-3xl">
+                {displayName[0].toUpperCase()}
+              </div>
+            )}
+          </div>
+          <div>
+            <h1 className="text-3xl font-extrabold">{displayName}</h1>
+            <p className="text-white/70">{email}</p>
+            <p className="bg-[#8e2afc]/20 border border-[#8e2afc]/50 rounded-full px-3 py-0.5 text-sm text-white">
+              Eventos creados: <strong>{totalEventos} | </strong> Realizados: <strong>{realizados} | </strong> Próximos: <strong>{futuros}</strong> 
+            </p>
+          </div>
+        </div>
+        <div className="flex gap-2">
+          {!editMode && (
+            <button onClick={() => setEditMode(true)} className="text-sm px-3 py-1 rounded bg-[#8e2afc] hover:bg-[#7b1fe0] transition">Editar datos</button>
+          )}
+          <button onClick={signOut} className="text-sm px-3 py-1 rounded bg-[#8e2afc] hover:bg-[#7b1fe0] transition">Cerrar sesión</button>
+        </div>
+      </div>
 
-    <AnimatePresence mode="wait">
-      <motion.div
-        key={current}
-        initial={{ opacity: 0, x: 24 }}
-        animate={{ opacity: 1, x: 0 }}
-        exit={{ opacity: 0, x: -24 }}
-        transition={{ duration: 0.15 }}
-        className="space-y-6"
-      >
-        {steps[current].content}
-      </motion.div>
-    </AnimatePresence>
+      <div className="max-w-3xl mx-auto px-4 py-8">
+        {!editMode ? (
+          <Card title="Información personal">
+            <KeyRow k="Nombre" v={record.nombre} />
+            <KeyRow k="Teléfono" v={record.phone_number} />
+            <KeyRow k="RUT" v={record.rut} />
+            <KeyRow k="Dirección" v={record.direccion} />
+            <KeyRow k="Sexo" v={record.sexo} />
+            <KeyRow k="Fecha de nacimiento" v={fechaNacimientoFormateada} />
+            <KeyRow k="Rol" v={<Chip text={displayRol(dbUser?.rol ?? "")} />} />
+          </Card>
+        ) : (
+          <FormProvider {...methods}>
+            <form onSubmit={(e) => { e.preventDefault(); setConfirmOpen(true); }} className="space-y-6" noValidate>
+              <Section title="Información personal">
+                <RHFInput name="nombre" label="Nombre *" />
+                <RHFInput name="phone_number" label="Teléfono" />
+                <RHFInput name="rut" label="RUT" />
+                <RHFInput name="direccion" label="Dirección" />
 
-    <div className="flex justify-between pt-6">
-      {current > 0 ? (
-        <LoadingButton type="button" variant="outline" onClick={prev}>
-          Atrás
-        </LoadingButton>
-      ) : (
-        <span />
+                <RHFCustomSelect
+           name="sexo"
+  label="Sexo"
+  options={[
+    { value: "Femenino", label: "Femenino" },
+    { value: "Masculino", label: "Masculino" },
+    { value: "No binario", label: "No binario" },
+    { value: "Prefiero no decirlo", label: "Prefiero no decirlo" },
+    { value: "Otro", label: "Otro" },
+  ]}
+/>
+
+                <RHFInput name="fecha_nacimiento" label="Fecha de nacimiento" type="date" />
+              </Section>
+              <Section title="Avatar">
+                <RHFFile name="photo_url" label="Reemplazar avatar (opcional)" />
+              </Section>
+              <div className="flex justify-end gap-3">
+                <button type="button" onClick={handleCancel} className="text-sm px-3 py-1 rounded bg-[#8e2afc] hover:bg-[#7b1fe0] transition">Cancelar</button>
+                <button type="submit" disabled={saving} className="text-sm px-3 py-1 rounded bg-[#8e2afc] hover:bg-[#7b1fe0] transition">Guardar cambios</button>
+              </div>
+            </form>
+          </FormProvider>
+        )}
+      </div>
+
+      {confirmOpen && (
+        <ModalConfirm title="¿Guardar los cambios?" description="Se actualizarán los datos de tu perfil." loading={saving} onConfirm={onConfirmSave} onCancel={() => setConfirmOpen(false)} />
       )}
-
-      <LoadingButton
-        type="submit"
-        loading={loadingStep}
-      >
-        {current === total - 1 ? "Enviar formulario" : "Siguiente"}
-      </LoadingButton>
-    </div>
-  </form>
-</FormProvider>
-
-     <SuccessModal
-        open={sent}
-        title="¡Evento enviado!"
-        subtitle="Nos pondremos en contacto contigo pronto."
-        onClose={() => setSent(false)}
-      />
     </main>
   );
 }
 
-/* =========================================================
- * Steps — sin genéricos ni children tipados raros
- * =======================================================*/
-
-function useSteps() {
-  return [
-    {
-      icon: "🎵",
-      title: "Información del Evento",
-      content: (
-        <LocalCard title="Información del Evento">
-          <RHFInput
-            name="nombre"
-            label="Nombre del Evento *"
-            placeholder="Ej: PURPLE NIGHTS • MIDNIGHT VIBES"
-          />
-          <RHFSelect
-            name="tipo"
-            label="Tipo de Evento *"
-            options={["Club", "Festival", "After", "Privado", "Open Air", "Bar"]}
-            placeholder="Selecciona el tipo"
-          />
-        </LocalCard>
-      ),
-    },
-    {
-      icon: "🕒",
-      title: "Fecha & Horario",
-      content: (
-        <LocalCard title="Fecha & Horario">
-          <RHFInput name="fecha" type="date" label="Fecha del Evento *" />
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <RHFInput name="horaInicio" type="time" label="Hora de Inicio *" />
-            <RHFInput name="horaCierre" type="time" label="Hora de Cierre *" />
-          </div>
-        </LocalCard>
-      ),
-    },
-    
-    {
-      icon: "👥",
-      title: "Capacidad",
-      content: (
-<LocalCard title="Capacidad">
-<RHFSelect
-  name="capacidad"
-  label="Capacidad esperada *"
-  placeholder="Selecciona una opción"
-  options={["0 a 200", "201 a 500", "501 a 1000", "1001 a 2000", "Más de 2000"]}
-/>
-  
-
-</LocalCard>
-      ),
-    },
-    {
-      icon: "📞",
-      title: "Contacto organizador",
-      content: (
-        <LocalCard title="Contacto organizador">
-          <RHFInput
-            name="promotor"
-            label="Nombre del Promotor *"
-            placeholder="Tu nombre o nombre artístico"
-          />
-          <RHFInput
-            name="telefono"
-            label="WhatsApp/Teléfono *"
-            placeholder="+56 9 1234 5678"
-          />
-          <RHFInput
-          name="email"
-          type="email"
-          label="Email *"
-          placeholder="promotor@goup.com"
-          />
-        </LocalCard>
-      ),
-    },
-    {
-      icon: "✨",
-      title: "Concepto & Experiencia",
-      content: (
-        <LocalCard title="Concepto & Experiencia">
-          <RHFTextarea
-            name="desc"
-            label="Describe la atmósfera, música, efectos especiales, dress code, etc. *"
-            rows={5}
-            placeholder="Género musical, DJ lineup, luces, máquinas de humo, dress code, ..."
-          />
-          <RHFCheckboxGroup
-            name="generos"
-            label="Géneros musicales (puedes elegir varios) *"
-            options={[...generosMusicales]}
-          />
-        </LocalCard>
-      ),
-    },
-    {
-      icon: "🧾",
-      title: "Políticas del evento",
-      content: (
-        <LocalCard title="Políticas del evento">
-          <RHFSelect
-            name="edadMinima"
-            label="Edad mínima para el ingreso *"
-            options={Array.from({ length: 53 }, (_, i) => `${i + 18}`)} // de 18 a 70
-            placeholder="Selecciona edad mínima"
-          />
-    
-          <RHFSelect
-            name="codigoVestimenta"
-            label="Código de vestimenta *"
-            options={["Casual", "Formal", "Semi-formal", "Urbano", "Fiesta temática"]}
-            placeholder="Selecciona el código"
-          />
-    
-          <RHFSelect
-            name="zonasVIP"
-            label="¿Tiene zonas VIP?"
-            options={["No", "1", "2", "3", "4", "5", "Más de 5"]}
-          />
-    
-          <RHFSelect
-            name="aceptaReservas"
-            label="¿Acepta reservas?"
-            options={["Sí", "No"]}
-          />
-    
-          <RHFSelect
-            name="tieneLineup"
-            label="¿Tendrá DJs con line-up?"
-            options={["Sí", "No"]}
-          />
-    
-          {/* Mostrar campos dinámicos si tiene line-up */}
-          <LineupFields />
-        </LocalCard>
-      )
-    },
-
-    {
-      icon: "🛡️",
-      title: "Flyer & Seguridad",
-      content: (
-        <LocalCard title="Flyer & Seguridad">
-          <RHFFile name="flyer" label="Flyer del evento" />
-          <RHFFile name="imgSec" label="Imagen secundaria (opcional)" />
-        </LocalCard>
-      ),
-    },
-    {
-      icon: "✅",
-      title: "Revisión",
-      content: (
-        <LocalCard title="Revisión final">
-          <p className="text-sm text-white/70">
-            Revisa que toda la información sea correcta antes de enviar.
-          </p>
-        </LocalCard>
-      ),
-    },
-  ] as const;
+function Card({ title, children }: { title: string; children: React.ReactNode }) {
+  return (
+    <section className="rounded-xl border border-white/10 bg-white/[0.03] backdrop-blur p-5">
+      <h3 className="font-semibold text-[#cbb3ff] mb-3">{title}</h3>
+      <div className="space-y-2">{children}</div>
+    </section>
+  );
 }
+
+function KeyRow({ k, v }: { k: string; v?: React.ReactNode }) {
+  return (
+    <p className="flex justify-between text-sm text-white/80 border-b border-white/10 py-2">
+      <span className="text-white/60">{k}</span>
+      <span>{v || "—"}</span>
+    </p>
+  );
+}
+
+function Section({ title, children }: { title: string; children: React.ReactNode }) {
+  return (
+    <div className="space-y-4">
+      <h2 className="text-xl font-bold text-[#cbb3ff]">{title}</h2>
+      <div className="space-y-4">{children}</div>
+    </div>
+  );
+}
+
+function Chip({ text }: { text: string }) {
+  return <span className="bg-[#8e2afc]/20 border border-[#8e2afc]/50 rounded-full px-3 py-0.5 text-sm text-white">{text || "—"}</span>;
+}
+function Chip2({ number }: { number: number }) {
+  return <span className="bg-[#8e2afc]/20 border border-[#8e2afc]/50 rounded-full px-3 py-0.5 text-sm text-white">{number || "—"}</span>;
+}*/

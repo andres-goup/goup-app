@@ -1,503 +1,343 @@
-// src/pages/ProfilePage.tsx
+// ✅ Versión mejorada y estilizada de `ProfilePage.tsx` con avatar centrado y el doble de grande
+import MenuItem from "@mui/material/MenuItem";
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { FormProvider, useForm } from "react-hook-form";
 import { z } from "zod";
 import { zodResolver } from "@hookform/resolvers/zod";
 import toast from "react-hot-toast";
-import { supabase } from "@/lib/supabase";
+
+import {
+  doc,
+  getDoc,
+  setDoc,
+  updateDoc,
+  collection,
+  query,
+  where,
+  getDocs,
+  Firestore,
+} from "firebase/firestore";
+import {
+  getStorage,
+  ref as storageRef,
+  uploadBytes,
+  getDownloadURL,
+} from "firebase/storage";
+import { updateProfile } from "firebase/auth";
+import { useFormContext } from "react-hook-form";
 import { useAuth } from "@/auth/AuthContext";
+import { db as firebaseDb, auth as firebaseAuth } from "@/lib/firebase";
 
 import { RHFInput, RHFFile } from "@/components/form/control";
-import goupLogo from "@/assets/goup_logo.png"; // ⬅️ para el mosaico del banner
+import RHFSelect from "@/components/form/control/RHFSelect";
+import ModalConfirm from "@/components/ModalConfirm";
+import goupLogo from "@/assets/goup_logo.png";
 
-/* ===========================
-   Schema y tipos
-   =========================== */
 const profileSchema = z.object({
   nombre: z.string().min(1, "El nombre es obligatorio"),
-  telefono: z.string().optional().or(z.literal("")),
+  phone_number: z.string().optional().or(z.literal("")),
   rut: z.string().optional().or(z.literal("")),
   direccion: z.string().optional().or(z.literal("")),
-  // archivo opcional para reemplazar avatar
-  foto: z.any().optional().nullable(),
+  sexo: z.string().optional().or(z.literal("")),
+  fecha_nacimiento: z.string().optional().or(z.literal("")),
+  photo_url: z.any().optional().nullable(),
 });
+
 type ProfileForm = z.infer<typeof profileSchema>;
 
-type DBUsuario = {
-  id_usuario: string;
-  auth_user_id: string;
-  correo: string | null;
-  nombre: string | null;
-  telefono: string | null;
-  rut: string | null;
-  direccion: string | null;
-  foto: string | null;
-};
-
-type DBEventoLite = {
-  id_evento: string;
-  fecha: string;
-  horaInicio?: string | null;
-  horaCierre?: string | null;
-};
-
 export default function ProfilePage() {
-  const { user, dbUser, loading, signOut } = useAuth();
-
+  const { user, dbUser, loading: authLoading, signOut } = useAuth();
   const [loadingPage, setLoadingPage] = useState(true);
   const [saving, setSaving] = useState(false);
   const [editMode, setEditMode] = useState(false);
   const [confirmOpen, setConfirmOpen] = useState(false);
-
-  const [record, setRecord] = useState<DBUsuario | null>(null);
+  const [record, setRecord] = useState<any>(null);
   const originalRef = useRef<ProfileForm | null>(null);
-
-  // Contadores de eventos
-  const [totalEventos, setTotalEventos] = useState<number>(0);
-  const [realizados, setRealizados] = useState<number>(0);
+  const [totalEventos, setTotalEventos] = useState(0);
+  const [realizados, setRealizados] = useState(0);
 
   const methods = useForm<ProfileForm>({
     resolver: zodResolver(profileSchema),
     defaultValues: undefined,
     mode: "onChange",
   });
+  
 
-  /* ===========================
-     Carga inicial del usuario
-     =========================== */
   useEffect(() => {
     (async () => {
-      if (loading) return;
-      if (!user) {
+      if (authLoading) return;
+      if (!user?.uid) {
         setLoadingPage(false);
         return;
       }
-
       try {
-        // Traer registro de usuario
-        const { data, error } = await supabase
-          .from("usuario")
-          .select(
-            "id_usuario, auth_user_id, correo, nombre, telefono, rut, direccion, foto"
-          )
-          .eq("auth_user_id", user.id)
-          .maybeSingle<DBUsuario>();
-
-        if (error) throw error;
-
-        const meta = user.user_metadata ?? {};
-        const merged: DBUsuario = {
-          id_usuario: data?.id_usuario ?? dbUser?.id_usuario ?? "",
-          auth_user_id: user.id,
-          correo: data?.correo ?? (user.email ?? null),
-          nombre: data?.nombre ?? (meta.full_name ?? null),
-          telefono: data?.telefono ?? (user.phone ?? null),
-          rut: data?.rut ?? null,
-          direccion: data?.direccion ?? null,
-          foto: data?.foto ?? (meta.picture ?? meta.avatar_url ?? null),
-        };
-
-        setRecord(merged);
-
+        const userRef = doc(firebaseDb as Firestore, "usersWeb", user.uid);
+        const snap = await getDoc(userRef);
+        const data = snap.exists()
+          ? snap.data()
+          : {
+              uid: user.uid,
+              email: user.email,
+              nombre: user.displayName,
+              phone_number: "",
+              rut: "",
+              direccion: "",
+              sexo: "",
+              fecha_nacimiento: "",
+              photo_url: user.photoURL,
+            };
+        setRecord(data);
         const defaults: ProfileForm = {
-          nombre: merged.nombre ?? "",
-          telefono: merged.telefono ?? "",
-          rut: merged.rut ?? "",
-          direccion: merged.direccion ?? "",
-          foto: null, // para reemplazo
+          nombre: data.nombre ?? "",
+          phone_number: data.phone_number ?? "",
+          rut: data.rut ?? "",
+          direccion: data.direccion ?? "",
+          sexo: typeof data.sexo === "string" ? data.sexo : "",
+          fecha_nacimiento: data.fecha_nacimiento?.seconds
+            ? new Date(data.fecha_nacimiento.seconds * 1000)
+                .toISOString()
+                .split("T")[0]
+            : data.fecha_nacimiento ?? "",
+          photo_url: null,
         };
         methods.reset(defaults);
         originalRef.current = defaults;
-      } catch (e: any) {
-        console.error(e);
-        toast.error(e?.message ?? "No se pudo cargar tu perfil");
+      } catch (e) {
+        toast.error("No se pudo cargar tu perfil");
       } finally {
         setLoadingPage(false);
       }
     })();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [loading, user]);
+  }, [authLoading, user, methods]);
 
-  /* ===========================
-     Cargar eventos y contar
-     =========================== */
   useEffect(() => {
     (async () => {
-      if (!record?.id_usuario) return;
-      const { data, error } = await supabase
-        .from("evento")
-        .select("id_evento, fecha, horaInicio, horaCierre")
-        .eq("id_usuario", record.id_usuario)
-        .order("fecha", { ascending: false });
-
-      if (error) {
-        console.error(error);
-        return;
-      }
-
-      const list = (data ?? []) as DBEventoLite[];
+      if (!record?.uid) return;
+      const q = query(
+        collection(firebaseDb as Firestore, "Eventos"),
+        where("uid_usersWeb", "==", "/usersWeb/" + record.uid)
+      );
+      const snap = await getDocs(q);
+      const list = snap.docs.map((d) => d.data());
       setTotalEventos(list.length);
-
       const now = Date.now();
-      const past = list.filter((ev) => {
-        const base = ev.horaCierre || ev.horaInicio || "00:00";
-        const dt = new Date(`${ev.fecha}T${base}`);
-        return now > dt.getTime();
+      const pastCount = list.filter((ev) => {
+        const t = ev.horaCierre || ev.horaInicio || "00:00";
+        return now > new Date(`${ev.fecha}T${t}`).getTime();
       }).length;
-
-      setRealizados(past);
+      setRealizados(pastCount);
     })();
-  }, [record?.id_usuario]);
+  }, [record]);
 
-  const avatarUrl = useMemo(() => record?.foto || "", [record]);
+  const avatarUrl = useMemo(() => record?.photo_url ?? "", [record]);
 
-  /* ===========================
-     Subir avatar (bucket público)
-     =========================== */
-  const uploadAvatarPublic = async (file: File, userId: string) => {
-    const bucket = "avatars";
-    if (!file.type.startsWith("image/")) {
-      throw new Error("El archivo debe ser una imagen.");
-    }
-    if (file.size > 3 * 1024 * 1024) {
-      throw new Error("La imagen no puede superar los 3MB.");
-    }
-    const ext = (file.name.split(".").pop() || "jpg").toLowerCase();
-    const path = `${userId}/avatar.${ext}`;
-
-    const { error: uploadError } = await supabase.storage
-      .from(bucket)
-      .upload(path, file, {
-        cacheControl: "3600",
-        upsert: true,
-        contentType: file.type,
-      });
-
-    if (uploadError) throw uploadError;
-
-    const { data } = supabase.storage.from(bucket).getPublicUrl(path);
-    return `${data.publicUrl}?v=${Date.now()}`; // cache-buster
+  const uploadAvatar = async (file: File): Promise<string> => {
+    const storage = getStorage();
+    const ext = file.name.split(".").pop()?.toLowerCase() || "jpg";
+    const path = `avatars/${user!.uid}/avatar.${ext}`;
+    const ref = storageRef(storage, path);
+    await uploadBytes(ref, file);
+    return await getDownloadURL(ref);
   };
 
-  /* ===========================
-     Acciones edición
-     =========================== */
   const handleCancel = () => {
     if (originalRef.current) methods.reset(originalRef.current);
     setEditMode(false);
   };
-
-  const askSave = () => setConfirmOpen(true);
+  function RHFCustomSelect({
+    name,
+    label,
+    options,
+  }: {
+    name: string;
+    label: string;
+    options: { value: string; label: string }[];
+  }) {
+    const {
+      register,
+      formState: { errors },
+    } = useFormContext();
+  
+    return (
+      <div>
+        <label className="block text-white text-sm font-medium mb-1">
+          {label}
+        </label>
+        <select
+          {...register(name)}
+          className="bg-zinc-800 border border-zinc-600 text-white rounded-md px-3 py-2 w-full focus:outline-none focus:ring-2 focus:ring-[#8e2afc]"
+        >
+          <option value="">Selecciona una opción</option>
+          {options.map((opt) => (
+            <option key={opt.value} value={opt.value}>
+              {opt.label}
+            </option>
+          ))}
+        </select>
+        {errors[name] && (
+          <p className="text-red-500 text-sm mt-1">
+            {(errors[name] as any)?.message}
+          </p>
+        )}
+      </div>
+    );
+  }
 
   const onConfirmSave = methods.handleSubmit(async (values) => {
-    if (!record || !user) return;
+    if (!user?.uid || !record) return;
+    setSaving(true);
     try {
-      setSaving(true);
-
-      // Si subió nueva imagen, súbela; si no, manten la actual
-      let url = record.foto ?? null;
-      if (values.foto instanceof File) {
-        url = await uploadAvatarPublic(values.foto, user.id);
-        // opcional: actualizar metadata de auth
-        try {
-          await supabase.auth.updateUser({ data: { avatar_url: url } });
-        } catch {
-          /* no crítico */
-        }
+      let photoURL = record.photo_url;
+      // Sube la foto solo si es un File nuevo
+      if (values.photo_url instanceof File) {
+        photoURL = await uploadAvatar(values.photo_url);
+        await updateProfile(firebaseAuth.currentUser!, { photoURL });
       }
-
+      // Genera el payload, omitiendo sexo y foto si están vacíos
       const payload = {
-        auth_user_id: user.id,
-        correo: record.correo ?? user.email,
-        nombre: values.nombre,
-        telefono: values.telefono || null,
-        rut: values.rut || null,
-        direccion: values.direccion || null,
-        foto: url,
+        ...record,
+        ...values,
+        ...(values.sexo && values.sexo !== "" ? { sexo: values.sexo } : {}),
+        photo_url: photoURL || null,
       };
-
-      // upsert por auth_user_id
-      const { error } = await supabase
-        .from("usuario")
-        .upsert(payload, { onConflict: "auth_user_id" });
-
-      if (error) throw error;
-
-      // refrescar estado local
-      const merged: DBUsuario = {
-        ...(record as DBUsuario),
-        nombre: payload.nombre,
-        telefono: payload.telefono,
-        rut: payload.rut,
-        direccion: payload.direccion,
-        foto: payload.foto,
-      };
-      setRecord(merged);
-
-      const newDefaults: ProfileForm = {
-        nombre: merged.nombre ?? "",
-        telefono: merged.telefono ?? "",
-        rut: merged.rut ?? "",
-        direccion: merged.direccion ?? "",
-        foto: null,
-      };
-      methods.reset(newDefaults);
-      originalRef.current = newDefaults;
-
-      toast.success("Datos guardados");
+  
+      // Elimina del payload el campo photo_url si está vacío (opcional)
+      if (!payload.photo_url) delete payload.photo_url;
+      // Elimina sexo si está vacío (opcional redundante)
+      if (!payload.sexo) delete payload.sexo;
+  
+      const userRef = doc(firebaseDb as Firestore, "usersWeb", user.uid);
+      const exists = (await getDoc(userRef)).exists();
+      if (exists) {
+        await updateDoc(userRef, payload);
+      } else {
+        await setDoc(userRef, payload);
+      }
+      await updateProfile(firebaseAuth.currentUser!, { displayName: values.nombre });
+  
+      setRecord(payload);
+      methods.reset({ ...values, photo_url: null });
+      originalRef.current = { ...values, photo_url: null };
+      toast.success("Perfil actualizado");
       setEditMode(false);
       setConfirmOpen(false);
-    } catch (e: any) {
-      console.error(e);
-      toast.error(e?.message ?? "No se pudo guardar");
+    } catch (err) {
+      // Muestra el error si ocurre
+      console.error(err);
+      toast.error("No se pudo guardar");
     } finally {
       setSaving(false);
     }
   });
-
-  /* ===========================
-     Helpers de roles
-     =========================== */
-  const roles = useMemo<string[]>(() => {
-    const raw = dbUser?.rol as unknown;
-    if (!raw) return [];
-    if (Array.isArray(raw)) return raw as string[];
-    return [String(raw)];
-  }, [dbUser?.rol]);
-
-  const rolePills = useMemo(() => {
-    const pills: string[] = [];
-    if (roles.includes("admin")) pills.push("Eres administrador");
-    if (roles.includes("club_owner")) pills.push("Eres creador de club");
-    if (roles.includes("productor")) pills.push("Eres productor");
-    // (opcional) si solo es "user" y nada más:
-    if (pills.length === 0 && roles.includes("user")) pills.push("Eres usuario");
-    return pills;
-  }, [roles]);
-
-  /* ===========================
-     Render
-     =========================== */
-  if (loadingPage) {
-    return (
-      <main className="min-h-screen bg-black text-white px-4 py-10">
-        <div className="max-w-3xl mx-auto">Cargando perfil…</div>
-      </main>
-    );
-  }
-
-  if (!record) {
-    return (
-      <main className="min-h-screen bg-black text-white px-4 py-10">
-        <div className="max-w-3xl mx-auto">
-          <p>No pudimos cargar tu perfil.</p>
-        </div>
-      </main>
-    );
-  }
-
-  const displayName = record.nombre ?? "Usuario";
-  const email = record.correo ?? "";
-
+  const displayName = record?.nombre || "Usuario";
+  const email = record?.email || "";
   const futuros = Math.max(0, totalEventos - realizados);
+  const fechaNacimientoFormateada = record?.fecha_nacimiento?.seconds
+    ? new Date(record.fecha_nacimiento.seconds * 1000).toISOString().split("T")[0]
+    : record?.fecha_nacimiento || "";
 
+  const displayRol = (rol: string) => {
+    switch (rol) {
+      case "admin": return "Administrador";
+      case "club_owner": return "Administrador de Club";
+      case "productor": return "Administrador de Productora";
+      default: return "Usuario pendiente de evaluación";
+    }
+  };
+
+  if (loadingPage || !record) return <p className="text-white text-center mt-8">Cargando perfil...</p>;
+
+  
   return (
-    <main className="min-h-screen bg-black text-white">
-      {/* ---------- HERO con mosaico del logo + gradiente ---------- */}
-      <div className="relative w-full h-40 md:h-48 overflow-hidden">
-        {/* capa gradiente */}
-        <div className="absolute inset-0 bg-gradient-to-r from-[#2a1454] via-[#381a63] to-[#8e2afc]" />
-        {/* capa mosaico del logo */}
-        <div
-          className="absolute inset-0 opacity-[0.08] mix-blend-overlay"
-          style={{
-            backgroundImage: `url(${goupLogo})`,
-            backgroundRepeat: "repeat",
-            backgroundSize: "80px 80px",
-            backgroundPosition: "center",
-          }}
-        />
+    <main className="text-white">
+      <div className="relative md:h-40 overflow-hidden">
+     
       </div>
 
-      <div className="max-w-3xl mx-auto px-4">
-        {/* Avatar encima de todo */}
-        <div className="-mt-10 md:-mt-12 relative z-10 flex items-end justify-between">
-          <div className="flex items-center gap-4">
-            <div className="h-24 w-24 md:h-28 md:w-28 rounded-full overflow-hidden border-4 border-[#8e2afc] bg-white/10">
-              {avatarUrl ? (
-                <img
-                  src={avatarUrl}
-                  alt={displayName}
-                  className="h-full w-full object-cover"
-                  referrerPolicy="no-referrer"
-                />
-              ) : (
-                <div className="h-full w-full grid place-items-center text-3xl">
-                  {(displayName[0] ?? "U").toUpperCase()}
-                </div>
-              )}
+      <div className="max-w-3xl mx-auto px-4 -mt-28 relative z-10 text-center">
+        <div className="mx-auto h-48 w-48 rounded-full overflow-hidden border-4 border-[#8e2afc] bg-white/10">
+          {avatarUrl ? (
+            <img src={avatarUrl} alt={displayName} className="w-full h-full object-cover" />
+          ) : (
+            <div className="grid place-items-center h-full text-4xl">
+              {displayName[0].toUpperCase()}
             </div>
-            <div>
-              <h1 className="text-2xl md:text-3xl font-extrabold">{displayName}</h1>
-              <p className="text-white/70 text-sm">{email}</p>
+          )}
+        </div>
+        <h1 className="text-3xl font-extrabold mt-4">{displayName}</h1>
+        <p className="text-white/70">{email}</p>
+        <p className="bg-[#8e2afc]/20 border border-[#8e2afc]/50 rounded-full px-3 py-0.5 text-sm inline-block mt-2">
+          Eventos: <strong>{totalEventos}</strong>  
+        </p>
+        <p className="bg-[#8e2afc]/20 border border-[#8e2afc]/50 rounded-full px-3 py-0.5 text-sm inline-block mt-2">
+        Realizados: <strong>{realizados}</strong>
+        </p>
 
-              {/* Roles como frases */}
-              {rolePills.length > 0 && (
-                <div className="mt-2 flex flex-wrap gap-2">
-                  {rolePills.map((txt) => (
-                    <span
-                      key={txt}
-                      className="text-xs px-2 py-1 rounded bg-[#8e2afc]/20 text-[#e4d7ff] border border-[#8e2afc]/30"
-                    >
-                      {txt}
-                    </span>
-                  ))}
-                </div>
-              )}
+        <p className="bg-[#8e2afc]/20 border border-[#8e2afc]/50 rounded-full px-3 py-0.5 text-sm inline-block mt-2">
+        Próximos: <strong>{futuros}</strong>
+        </p>
 
-              {/* Contadores de eventos (frase corta) */}
-              <p className="text-xs text-white/70 mt-2">
-                Has creado <span className="text-white font-semibold">{totalEventos}</span>{" "}
-                evento(s) • Has realizado{" "}
-                <span className="text-white font-semibold">{realizados}</span>{" "}
-                {futuros > 0 && (
-                  <>
-                    • Próximos{" "}
-                    <span className="text-white font-semibold">{futuros}</span>
-                  </>
-                )}
-              </p>
-            </div>
-          </div>
 
-          <button
-            type="button"
-            onClick={signOut}
-            className="h-10 px-4 rounded-md bg-white/10 hover:bg-white/20 border border-white/10 text-sm"
-          >
-            Cerrar sesión
-          </button>
+
+
+        <div className="mt-4 flex justify-center gap-3">
+          {!editMode && <button onClick={() => setEditMode(true)} className="text-sm px-3 py-1 rounded bg-[#8e2afc] hover:bg-[#7b1fe0] transition">Editar datos</button>}
+          <button onClick={signOut} className="text-sm px-3 py-1 rounded bg-[#8e2afc] hover:bg-[#7b1fe0] transition">Cerrar sesión</button>
         </div>
       </div>
 
-      <div className="max-w-3xl mx-auto px-4 pb-12 pt-6">
-        {/* ---------- MODO LECTURA ---------- */}
-        {!editMode && (
-          <div className="grid gap-6">
-            <Card title="Información personal">
-              <KeyRow k="Nombre" v={record.nombre || "—"} />
-              <KeyRow k="Teléfono" v={record.telefono || "—"} />
-              <KeyRow k="RUT" v={record.rut || "—"} />
-              <KeyRow k="Dirección" v={record.direccion || "—"} />
-            </Card>
-
-            <Card title="Actividad">
-              <KeyRow k="Eventos creados" v={String(totalEventos)} />
-              <KeyRow k="Eventos realizados" v={String(realizados)} />
-              <KeyRow k="Eventos próximos" v={String(futuros)} />
-            </Card>
-
-            <div className="pt-2">
-              <button
-                type="button"
-                onClick={() => setEditMode(true)}
-                className="px-5 py-2 rounded-md bg-[#8e2afc] hover:bg-[#7b1fe0] transition"
-              >
-                Editar datos
-              </button>
-            </div>
-          </div>
-        )}
-
-        {/* ---------- MODO EDICIÓN ---------- */}
-        {editMode && (
+      <div className="max-w-3xl mx-auto px-4 py-8">
+        {!editMode ? (
+          <Card title="Información personal">
+            <KeyRow k="Nombre" v={record.nombre} />
+            <KeyRow k="Teléfono" v={record.phone_number} />
+            <KeyRow k="RUT" v={record.rut} />
+            <KeyRow k="Dirección" v={record.direccion} />
+            <KeyRow k="Sexo" v={record.sexo} />
+            <KeyRow k="Fecha de nacimiento" v={fechaNacimientoFormateada} />
+            <KeyRow k="Rol" v={<Chip text={displayRol(dbUser?.rol ?? "")} />} />
+          </Card>
+        ) : (
           <FormProvider {...methods}>
-            <form
-              onSubmit={(e) => {
-                e.preventDefault();
-                setConfirmOpen(true); // preguntamos solo al guardar
-              }}
-              className="space-y-6"
-              noValidate
-            >
+            <form onSubmit={(e) => { e.preventDefault(); setConfirmOpen(true); }} className="space-y-6" noValidate>
               <Section title="Información personal">
                 <RHFInput name="nombre" label="Nombre *" />
-                <RHFInput name="telefono" label="Teléfono" placeholder="+56 9 1234 5678" />
+                <RHFInput name="phone_number" label="Teléfono" />
                 <RHFInput name="rut" label="RUT" />
                 <RHFInput name="direccion" label="Dirección" />
-              </Section>
+                <RHFCustomSelect
+           name="sexo"
+  label="Sexo"
+  options={[
+    { value: "Femenino", label: "Femenino" },
+    { value: "Masculino", label: "Masculino" },
+    { value: "No binario", label: "No binario" },
+    { value: "Prefiero no decirlo", label: "Prefiero no decirlo" },
+    { value: "Otro", label: "Otro" },
+  ]}
+/>
 
-              <Section title="Imagen de perfil">
-                <div className="grid md:grid-cols-2 gap-6">
-                  <div>
-                    <div className="text-white/70 text-sm mb-2">Avatar actual</div>
-                    <div className="rounded overflow-hidden border border-white/10 mb-3 h-40 grid place-items-center bg-white/5">
-                      {avatarUrl ? (
-                        <img src={avatarUrl} alt="avatar" className="h-40 w-full object-cover" />
-                      ) : (
-                        <div className="text-white/40">Sin imagen</div>
-                      )}
-                    </div>
-                  </div>
-                  <div className="self-start">
-                    <RHFFile name="foto" label="Reemplazar foto (opcional)" />
-                    <p className="text-xs text-white/50 mt-2">JPG/PNG hasta 3MB.</p>
-                  </div>
-                </div>
+                <RHFInput name="fecha_nacimiento" label="Fecha de nacimiento" type="date" />
               </Section>
-
-              <div className="flex gap-3 pt-2">
-                <button
-                  type="button"
-                  onClick={handleCancel}
-                  className="px-4 py-2 rounded border border-white/20 hover:bg-white/10"
-                >
-                  Cancelar
-                </button>
-                <button
-                  type="submit"
-                  disabled={saving}
-                  className="px-4 py-2 rounded bg-[#8e2afc] hover:bg-[#7b1fe0] disabled:opacity-60"
-                >
-                  Guardar cambios
-                </button>
+              <Section title="Avatar">
+                <RHFFile name="photo_url" label="Reemplazar avatar (opcional)" />
+              </Section>
+              <div className="flex justify-end gap-3">
+                <button type="button" onClick={handleCancel} className="text-sm px-3 py-1 rounded bg-[#8e2afc] hover:bg-[#7b1fe0] transition">Cancelar</button>
+                <button type="submit" disabled={saving} className="text-sm px-3 py-1 rounded bg-[#8e2afc] hover:bg-[#7b1fe0] transition">Guardar cambios</button>
               </div>
             </form>
           </FormProvider>
         )}
       </div>
 
-      {/* ---------- MODAL CONFIRMACIÓN ---------- */}
       {confirmOpen && (
-        <div className="fixed inset-0 z-50 grid place-items-center bg-black/60">
-          <div className="bg-neutral-900 rounded-md p-6 w-[92vw] max-w-md text-center border border-white/10">
-            <h3 className="text-lg font-semibold mb-2">¿Guardar los cambios?</h3>
-            <p className="text-white/70 mb-5">Se actualizarán los datos de tu perfil.</p>
-            <div className="flex justify-center gap-3">
-              <button
-                className="px-4 py-2 rounded border border-white/20 hover:bg-white/10"
-                onClick={() => setConfirmOpen(false)}
-              >
-                No
-              </button>
-              <button
-                className="px-4 py-2 rounded bg-[#8e2afc] hover:bg-[#7b1fe0]"
-                disabled={saving}
-                onClick={() => onConfirmSave()}
-              >
-                Sí, guardar
-              </button>
-            </div>
-          </div>
-        </div>
+        <ModalConfirm title="¿Guardar los cambios?" description="Se actualizarán los datos de tu perfil." loading={saving} onConfirm={onConfirmSave} onCancel={() => setConfirmOpen(false)} />
       )}
     </main>
   );
 }
 
-/* ===========================
-   UI pequeñas reutilizables
-   =========================== */
 function Card({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <section className="rounded-xl border border-white/10 bg-white/[0.03] backdrop-blur p-5">
@@ -506,19 +346,28 @@ function Card({ title, children }: { title: string; children: React.ReactNode })
     </section>
   );
 }
+
 function KeyRow({ k, v }: { k: string; v?: React.ReactNode }) {
   return (
-    <p className="text-sm text-white/80 flex items-baseline justify-between gap-3">
+    <p className="flex justify-between text-sm text-white/80 border-b border-white/10 py-2">
       <span className="text-white/60">{k}</span>
-      <span className="text-right">{v ?? "—"}</span>
+      <span>{v || "—"}</span>
     </p>
   );
 }
+
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
-    <section className="space-y-4">
+    <div className="space-y-4">
       <h2 className="text-xl font-bold text-[#cbb3ff]">{title}</h2>
       <div className="space-y-4">{children}</div>
-    </section>
+    </div>
   );
+}
+
+function Chip({ text }: { text: string }) {
+  return <span className="bg-[#8e2afc]/20 border border-[#8e2afc]/50 rounded-full px-3 py-0.5 text-sm text-white">{text || "—"}</span>;
+}
+function Chip2({ number }: { number: number }) {
+  return <span className="bg-[#8e2afc]/20 border border-[#8e2afc]/50 rounded-full px-3 py-0.5 text-sm text-white">{number || "—"}</span>;
 }

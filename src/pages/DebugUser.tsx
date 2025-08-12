@@ -1,17 +1,25 @@
+// src/components/DebugUser.tsx
 import { useAuth } from "@/auth/AuthContext";
 
 export default function DebugUser() {
-  const { session, user, dbUser, rol, loading } = useAuth();
+  const { user, dbUser, rol, loading } = useAuth();
 
-  if (loading) return <p>Cargando contexto...</p>;
+  if (loading) return <p className="text-white">Cargando contexto de autenticación…</p>;
 
   return (
-    <div style={{ padding: "2rem" }}>
-      <h2>🔍 Diagnóstico de Usuario</h2>
-      <pre><strong>Session:</strong> {JSON.stringify(session, null, 2)}</pre>
-      <pre><strong>User (auth):</strong> {JSON.stringify(user, null, 2)}</pre>
-      <pre><strong>dbUser (tabla users):</strong> {JSON.stringify(dbUser, null, 2)}</pre>
-      <pre><strong>Rol (validado):</strong> {JSON.stringify(rol, null, 2)}</pre>
+    <div className="p-6 bg-neutral-900 text-white rounded-md">
+      <h2 className="text-2xl font-semibold mb-4">🔍 Debug Firebase Auth & Firestore</h2>
+      <div className="mb-4">
+        <strong>Firebase Auth User:</strong>
+        <pre className="overflow-auto max-h-48 bg-black/50 p-2 rounded">{JSON.stringify(user, null, 2)}</pre>
+      </div>
+      <div className="mb-4">
+        <strong>Firestore “usersWeb” Doc:</strong>
+        <pre className="overflow-auto max-h-48 bg-black/50 p-2 rounded">{JSON.stringify(dbUser, null, 2)}</pre>
+      </div>
+      <div>
+        <strong>Rol:</strong> <code>{rol ?? "–"}</code>
+      </div>
     </div>
   );
 }

@@ -1,9 +1,8 @@
 // src/pages/EventDetail.tsx
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useParams, Link, useNavigate } from "react-router-dom";
-import { supabase } from "@/lib/supabase";
 import toast from "react-hot-toast";
-import { FormProvider, useForm } from "react-hook-form";
+import { FormProvider, useForm, useWatch } from "react-hook-form";
 import { z } from "zod";
 import { zodResolver } from "@hookform/resolvers/zod";
 
@@ -16,9 +15,22 @@ import {
 } from "@/components/form/control";
 import { LineupFields } from "@/components/form/LineupFields";
 
-/* =========================
- * Helpers de normalización
- * ========================= */
+import {
+  Firestore,
+  doc,
+  getDoc,
+  updateDoc,
+  deleteDoc,
+} from "firebase/firestore";
+import {
+  getStorage,
+  ref as storageRef,
+  uploadBytes,
+  getDownloadURL,
+} from "firebase/storage";
+import { db as firebaseDb } from "@/lib/firebase";
+
+// ---------- Helpers ----------
 const asBool = (v: unknown): boolean => {
   if (typeof v === "boolean") return v;
   if (v == null) return false;
@@ -28,7 +40,7 @@ const asBool = (v: unknown): boolean => {
 const vipToCount = (v: unknown): number => {
   const s = String(v ?? "");
   if (s.toLowerCase() === "no" || s === "" || s === "0") return 0;
-  if (s.toLowerCase().includes("más de")) return 6; // ajustable
+  if (s.toLowerCase().includes("más de")) return 6;
   const n = Number(s);
   return Number.isFinite(n) ? n : 0;
 };
@@ -38,7 +50,6 @@ const countToVipSelect = (n: number | null | undefined): string => {
   return String(n);
 };
 const boolToSiNo = (b?: boolean | null) => (b ? "Sí" : "No");
-
 const normalizeGeneros = (g: string[] | string | null): string[] => {
   if (Array.isArray(g)) return g;
   if (typeof g === "string") {
@@ -48,9 +59,7 @@ const normalizeGeneros = (g: string[] | string | null): string[] => {
   return [];
 };
 
-/* =========================
- * Form schema (alineado con Event.tsx)
- * ========================= */
+// ---------- Form schema ----------
 const editSchema = z.object({
   nombre: z.string().min(1),
   tipo: z.string().min(1),
@@ -64,47 +73,51 @@ const editSchema = z.object({
   email: z.string().email(),
   desc: z.string().optional().or(z.literal("")),
   generos: z.array(z.string()).optional().default([]),
-
-  edad: z.coerce.number().int().min(18).max(70),
+  edad: z.string().refine(
+    (val) => {
+      const num = Number(val);
+      return Number.isInteger(num) && num >= 18 && num <= 70;
+    },
+    { message: "Selecciona una edad válida" }
+  ),
   dress_code: z.string().min(1),
   tieneVip: z.string().optional().default("No"),
   reservas: z.union([z.boolean(), z.string()]).default("No"),
   tieneLineup: z.union([z.boolean(), z.string()]).default("No"),
   djs: z.array(z.string()).optional().default([]),
-
   flyer: z.any().optional().nullable(),
   imgSec: z.any().optional().nullable(),
+  generosOtro: z.string().optional(),
+  cantidadDJs: z.number(),
 });
 type EditForm = z.infer<typeof editSchema>;
 
+// ---------- Firestore event type ----------
 type DBEvento = {
   id_evento: string;
-  id_usuario: string;
+  uid_usersWeb: string;
   nombre: string;
   tipo: string;
   fecha: string;
-  horaInicio?: string | null;
-  horaCierre?: string | null;
-  capacidad?: string | null;
-  presupuesto?: string | null;
-  promotor?: string | null;
-  telefono?: string | null;
-  email?: string | null;
-  desc?: string | null;
+  horaInicio: string | null;
+  horaCierre: string | null;
+  capacidad: string | null;
+  presupuesto: string | null;
+  promotor: string | null;
+  telefono: string | null;
+  email: string | null;
+  desc: string | null;
   generos: string[] | string | null;
-
-  edad?: number | null;
+  edad: number | null;
   dress_code?: string | null;
-
-  tieneVip?: boolean | null;
-  cantidadZonasVip?: number | null;
-  aceptaReservas?: boolean | null;
-  tieneLineup?: boolean | null;
-  cantidadDJs?: number | null;
-  djs?: string[] | null;
-
-  flyer?: string | null;
-  imgSec?: string | null;
+  vip?: boolean | null;
+  cantidadZonasVip: number | null;
+  aceptaReservas: boolean | null;
+  lineup: boolean | null;
+  cantidadDJs: number | null;
+  djs: string[] | null;
+  flyer: string | null;
+  imgSec: string | null;
 };
 
 const generosMusicales = [
@@ -117,11 +130,10 @@ const generosMusicales = [
   "Trance",
   "Hip-Hop",
   "Urbano",
+  "Guaracha",
+  "Otros",
 ] as const;
 
-/* =========================
- * Helpers UI
- * ========================= */
 const fmtDateLong = (iso: string) => {
   try {
     return new Intl.DateTimeFormat("es", {
@@ -157,6 +169,8 @@ export default function EventDetailPage() {
   const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false);
   const originalValuesRef = useRef<EditForm | null>(null);
 
+  const formRef = useRef<HTMLFormElement>(null);
+
   const methods = useForm<EditForm>({
     resolver: zodResolver(editSchema),
     defaultValues: undefined,
@@ -167,22 +181,33 @@ export default function EventDetailPage() {
     (async () => {
       if (!id) return;
       setLoading(true);
-      const { data, error } = await supabase
-        .from("evento")
-        .select("*")
-        .eq("id_evento", id)
-        .single<DBEvento>();
-      if (error || !data) {
+      const docRef = doc(firebaseDb as Firestore, "Eventos", id);
+      const snap = await getDoc(docRef);
+      if (!snap.exists()) {
         toast.error("No se pudo cargar el evento");
         setLoading(false);
         return;
       }
+      const data = snap.data() as DBEvento;
+      data.id_evento = id;
       setEventData(data);
 
+      const lineupString =
+        data.lineup || (Array.isArray(data.djs) && data.djs.length > 0)
+          ? "Sí"
+          : "No";
+
+      const edadString =
+        data.edad !== null && data.edad !== undefined
+          ? String(data.edad)
+          : "18";
+
+      const genArr = normalizeGeneros(data.generos);
+
       const defaults: EditForm = {
-        nombre: data.nombre ?? "",
-        tipo: data.tipo ?? "",
-        fecha: data.fecha ?? "",
+        nombre: data.nombre,
+        tipo: data.tipo,
+        fecha: data.fecha,
         horaInicio: data.horaInicio ?? "",
         horaCierre: data.horaCierre ?? "",
         capacidad: data.capacidad ?? "",
@@ -191,19 +216,18 @@ export default function EventDetailPage() {
         telefono: data.telefono ?? "",
         email: data.email ?? "",
         desc: data.desc ?? "",
-        generos: normalizeGeneros(data.generos),
-
-        edad: data.edad ?? 18,
+        generos: genArr,
+        edad: edadString,
         dress_code: data.dress_code ?? "",
-        tieneVip: countToVipSelect(data.cantidadZonasVip ?? 0),
-        reservas: boolToSiNo(data.aceptaReservas ?? false),
-        tieneLineup: boolToSiNo(data.tieneLineup ?? false),
-        djs: (data.djs ?? []) as string[],
-
-        flyer: null,
-        imgSec: null,
+        tieneVip: countToVipSelect(data.cantidadZonasVip),
+        reservas: boolToSiNo(data.aceptaReservas),
+        tieneLineup: lineupString,
+        djs: Array.isArray(data.djs) ? data.djs : [],
+        flyer: "",
+        imgSec: "",
+        generosOtro: "",
+        cantidadDJs: Number(data.cantidadDJs),
       };
-
       methods.reset(defaults);
       originalValuesRef.current = defaults;
       setLoading(false);
@@ -214,46 +238,34 @@ export default function EventDetailPage() {
   const isPast = useMemo(() => {
     if (!eventData?.fecha) return false;
     const base = eventData.horaCierre || eventData.horaInicio || "00:00";
-    const dt = new Date(`${eventData.fecha}T${base}`);
-    return Date.now() > dt.getTime();
+    return Date.now() > new Date(`${eventData.fecha}T${base}`).getTime();
   }, [eventData]);
 
-  /* =========================
-   * Subir imágenes (edición)
-   * ========================= */
+  const selectedGeneros = useWatch({ name: "generos", control: methods.control });
+  const showOtroGenero = selectedGeneros?.includes("Otros") ?? false;
+
   const uploadImage = async (file: File | null, folder: string): Promise<string | null> => {
     if (!file) return null;
-    const filePath = `${folder}/${Date.now()}_${file.name}`;
-    const { error } = await supabase.storage.from("evento").upload(filePath, file, {
-      cacheControl: "3600",
-      upsert: false,
-    });
-    if (error) throw new Error(error.message);
-    return supabase.storage.from("evento").getPublicUrl(filePath).data.publicUrl;
+    const storage = getStorage();
+    const ext = file.name.split(".").pop() || "jpg";
+    const path = `Eventos/${id}/${folder}/${Date.now()}.${ext}`;
+    const ref = storageRef(storage, path);
+    await uploadBytes(ref, file);
+    return getDownloadURL(ref);
   };
 
-  /* =========================
-   * Acciones edición
-   * ========================= */
-  const handleCancel = () => {
-    if (originalValuesRef.current) {
-      methods.reset(originalValuesRef.current);
-    }
-    setEditMode(false);
-  };
-
-  const handleAskSave = () => setConfirmOpen(true);
-
-  const onConfirmSave = methods.handleSubmit(async (values) => {
+  const onConfirmSave = async (values: EditForm) => {
+    if (!eventData) return;
+    setSaving(true);
     try {
-      setSaving(true);
+      let generosFinal = [...(values.generos ?? [])];
+      if (values.generos.includes("Otros") && values.generosOtro?.trim()) {
+        generosFinal = generosFinal.filter((g) => g !== "Otros");
+        generosFinal.push(values.generosOtro.trim());
+      }
 
-      const newFlyerUrl = await uploadImage(values.flyer as File | null, "flyer");
-      const newImgSecUrl = await uploadImage(values.imgSec as File | null, "imgSec");
-
-      const cleanedDJs = (values.djs || [])
-        .map((dj) => (dj ?? "").toString().trim())
-        .filter(Boolean);
+      const newFlyer = values.flyer instanceof File ? await uploadImage(values.flyer, "flyer") : null;
+      const newImgSec = values.imgSec instanceof File ? await uploadImage(values.imgSec, "imgSec") : null;
 
       const payload: Partial<DBEvento> = {
         nombre: values.nombre,
@@ -267,77 +279,49 @@ export default function EventDetailPage() {
         telefono: values.telefono,
         email: values.email,
         desc: values.desc || null,
-        generos: values.generos ?? [],
-
-        edad: values.edad ?? 18,
+        generos: generosFinal,
+        edad: Number(values.edad),
         dress_code: values.dress_code,
-
-        tieneVip: vipToCount(values.tieneVip) > 0,
         cantidadZonasVip: vipToCount(values.tieneVip),
-
         aceptaReservas: asBool(values.reservas),
-        tieneLineup: asBool(values.tieneLineup),
-
-        cantidadDJs: cleanedDJs.length,
-        djs: cleanedDJs,
-
-        flyer: newFlyerUrl ?? eventData?.flyer ?? null,
-        imgSec: newImgSecUrl ?? eventData?.imgSec ?? null,
+        lineup: values.tieneLineup === "Sí",
+        cantidadDJs: Number(values.cantidadDJs),
+        djs: values.djs,
+        flyer: newFlyer ?? eventData.flyer ?? null,
+        imgSec: newImgSec ?? eventData.imgSec ?? null,
       };
 
-      const { error: updateError } = await supabase
-        .from("evento")
-        .update(payload)
-        .eq("id_evento", id!);
-
-      if (updateError) throw new Error(updateError.message);
+      const docRef = doc(firebaseDb as Firestore, "Eventos", id!);
+      await updateDoc(docRef, payload);
 
       toast.success("Datos guardados");
-
-      const merged: DBEvento = { ...(eventData as DBEvento), ...payload };
+      const merged = { ...eventData, ...payload } as DBEvento;
       setEventData(merged);
 
-      const newDefaults: EditForm = {
-        ...values,
-        flyer: null,
-        imgSec: null,
-        djs: cleanedDJs,
-        tieneVip: countToVipSelect(payload.cantidadZonasVip ?? 0),
-        reservas: boolToSiNo(payload.aceptaReservas ?? false),
-        tieneLineup: boolToSiNo(payload.tieneLineup ?? false),
-      };
+      const newDefaults: EditForm = { ...values };
       methods.reset(newDefaults);
       originalValuesRef.current = newDefaults;
-
       setEditMode(false);
       setConfirmOpen(false);
     } catch (err: any) {
-      toast.error(err.message ?? "No se pudo guardar");
+      console.error(err);
+      toast.error(err.message || "No se pudo guardar");
     } finally {
       setSaving(false);
     }
-  });
-
-  // ======= ELIMINAR EVENTO =======
-  const askDelete = () => setConfirmDeleteOpen(true);
+  };
 
   const onConfirmDelete = async () => {
-    if (!id) return;
+    setDeleting(true);
     try {
-      setDeleting(true);
-      const { error } = await supabase
-        .from("evento")
-        .delete()
-        .eq("id_evento", id);
-
-      if (error) throw new Error(error.message);
-
+      const docRef = doc(firebaseDb as Firestore, "Eventos", id!);
+      await deleteDoc(docRef);
       toast.success("Evento eliminado");
       setConfirmDeleteOpen(false);
-      // Redirige a Mis eventos (ajusta si usas otra ruta)
       navigate("/mis-eventos");
     } catch (err: any) {
-      toast.error(err.message ?? "No se pudo eliminar el evento");
+      console.error(err);
+      toast.error(err.message || "No se pudo eliminar el evento");
     } finally {
       setDeleting(false);
     }
@@ -359,55 +343,65 @@ export default function EventDetailPage() {
 
   const generos = normalizeGeneros(eventData.generos);
   const horarios = timeRange(eventData.horaInicio, eventData.horaCierre);
+  const askDelete = () => setConfirmDeleteOpen(true);
+  const handleCancel = () => {
+    if (originalValuesRef.current) {
+      methods.reset(originalValuesRef.current);
+    }
+    setEditMode(false);
+  };
 
+  // ------ RENDER (continúa en parte 2) ------
   return (
     <div className="text-white">
-      {/* ---------- HERO ---------- */}
+      {/* HERO */}
       <div className="relative w-full h-[320px] md:h-[420px] overflow-hidden">
         {eventData.flyer ? (
           <>
             <img
               src={eventData.flyer}
               alt="Flyer"
-              className="absolute inset-0 w-full h-full object-cover scale-105"
+              className="absolute w-full h-full object-cover scale-105"
             />
             <div className="absolute inset-0 bg-gradient-to-b from-black/30 via-black/50 to-black" />
           </>
         ) : (
-          <div className="absolute inset-0 bg-gradient-to-br from-[#25123e] via-[#381a63] to-[#8e2afc]" />
+          <div className="absolute bg-gradient-to-br from-[#25123e] via-[#381a63] to-[#8e2afc]" />
         )}
-
         <div className="relative h-full max-w-6xl mx-auto px-4 flex flex-col justify-end pb-6">
           <div className="flex items-center gap-2 mb-2">
-            <span className={`text-xs px-2 py-1 rounded border ${isPast ? "bg-white/10 border-white/20" : "bg-[#8e2afc]/20 border-[#8e2afc]/40 text-[#e4d7ff]"}`}>
+            <span
+              className={`text-xs px-2 py-1 rounded ${
+                isPast
+                  ? "bg-white/20 border border-white/20 text-Black/80"
+                  : "bg-[#8e2afc]/60 border-[#8e2afc]/40 text-[#e4d7ff]"
+              }`}
+            >
               {isPast ? "Realizado" : "Próximo"}
             </span>
-            {eventData.dress_code && (
-              <span className="text-xs px-2 py-1 rounded bg-white/10 border border-white/20">
+            {!!eventData.dress_code && (
+              <span className="text-xs px-2 py-1 rounded bg-[#151515]/80 border border-white/10">
                 Dress code: {eventData.dress_code}
               </span>
             )}
             {!!eventData.edad && (
-              <span className="text-xs px-2 py-1 rounded bg-white/10 border border-white/20">
+              <span className="text-xs px-2 py-1 rounded bg-[#151515]/80 border border-white/10">
                 +{eventData.edad}
               </span>
             )}
           </div>
-
           <h1 className="text-2xl md:text-4xl font-extrabold drop-shadow">
             {eventData.nombre}
           </h1>
-
-          <p className="text-white/80 mt-1">
+          <p className="text-white mt-1">
             {fmtDateLong(eventData.fecha)} • {horarios}
           </p>
-
           {generos.length > 0 && (
             <div className="flex flex-wrap gap-2 mt-3">
               {generos.map((g) => (
                 <span
                   key={g}
-                  className="text-xs px-2 py-1 rounded bg-[#8e2afc]/25 text-[#e3d6ff] border border-[#8e2afc]/40"
+                  className="text-xs px-2 py-1 rounded bg-[#8e2afc]/60 text-[#e3d6ff] border border-[#8e2afc]/40"
                 >
                   {g}
                 </span>
@@ -416,7 +410,17 @@ export default function EventDetailPage() {
           )}
         </div>
       </div>
-
+      {!isPast && (
+        <div className="max-w-6xl mx-auto px-4 py-6">
+          <button
+            type="button"
+            onClick={() => setEditMode(true)}
+            className=" px-5 py-2 rounded-md bg-[#8e2afc]/40 hover:bg-[#7b1fe0] transition"
+          >
+            Editar datos
+          </button>
+        </div>
+      )}
       {/* ---------- CONTENIDO ---------- */}
       <div className="max-w-6xl mx-auto px-4 py-6">
         {!editMode && (
@@ -430,16 +434,14 @@ export default function EventDetailPage() {
                   <p className="text-white/80 leading-relaxed">{eventData.desc}</p>
                 </section>
               )}
-
               {/* Line-up */}
               <section className="rounded-xl border border-white/10 bg-white/[0.03] backdrop-blur p-5">
                 <div className="flex items-center justify-between">
                   <h2 className="text-lg font-bold text-[#cbb3ff]">Line-up</h2>
                   <span className="text-xs text-white/60">
-                    {eventData.tieneLineup ? "Con line-up" : "Sin line-up"}
+                    {eventData.lineup ? "Con line-up" : "Sin line-up"}
                   </span>
                 </div>
-
                 {Array.isArray(eventData.djs) && eventData.djs.length > 0 ? (
                   <ul className="mt-3 grid sm:grid-cols-2 gap-2">
                     {eventData.djs.map((dj, i) => (
@@ -458,7 +460,6 @@ export default function EventDetailPage() {
                   <p className="text-white/60 mt-2 text-sm">No se registraron DJs.</p>
                 )}
               </section>
-
               {/* Galería */}
               <section className="rounded-xl border border-white/10 bg-white/[0.03] backdrop-blur p-5">
                 <h2 className="text-lg font-bold text-[#cbb3ff] mb-3">Galería</h2>
@@ -483,21 +484,7 @@ export default function EventDetailPage() {
                   </figure>
                 </div>
               </section>
-
-              {/* Botón Editar (sólo próximos) */}
-              {!isPast && (
-                <div className="pt-2">
-                  <button
-                    type="button"
-                    onClick={() => setEditMode(true)}
-                    className="px-5 py-2 rounded-md bg-[#8e2afc] hover:bg-[#7b1fe0] transition"
-                  >
-                    Editar datos
-                  </button>
-                </div>
-              )}
             </div>
-
             {/* Columna lateral (todas las propiedades) */}
             <aside className="space-y-6">
               <Card title="Resumen">
@@ -511,15 +498,10 @@ export default function EventDetailPage() {
                   <Badge label={`Dress code: ${eventData.dress_code || "—"}`} />
                 </div>
               </Card>
-
               <Card title="Políticas">
                 <KeyRow
                   k="Zonas VIP"
-                  v={
-                    eventData.tieneVip
-                      ? `${eventData.cantidadZonasVip ?? 1} zona(s)`
-                      : "No"
-                  }
+                  v={eventData.cantidadZonasVip + " zona(s)"}
                 />
                 <KeyRow
                   k="Reservas"
@@ -527,10 +509,9 @@ export default function EventDetailPage() {
                 />
                 <KeyRow
                   k="Line-up"
-                  v={eventData.tieneLineup ? `Sí • ${eventData.cantidadDJs ?? 0} DJ(s)` : "No"}
+                  v={eventData.lineup ? `Sí • ${eventData.cantidadDJs ?? 0} DJ(s)` : "No"}
                 />
               </Card>
-
               <Card title="Contacto">
                 <KeyRow k="Promotor" v={eventData.promotor || "—"} />
                 <KeyRow
@@ -566,10 +547,8 @@ export default function EventDetailPage() {
         {editMode && (
           <FormProvider {...methods}>
             <form
-              onSubmit={(e) => {
-                e.preventDefault();
-                setConfirmOpen(true); // preguntar solo al guardar
-              }}
+              ref={formRef}
+              onSubmit={methods.handleSubmit(() => setConfirmOpen(true))}
               className="space-y-6 mt-2"
               noValidate
             >
@@ -579,16 +558,24 @@ export default function EventDetailPage() {
                 <p className="text-white/70 text-sm mb-3">
                   Eliminar este evento es <b>irreversible</b>. Se borrarán sus datos y no hay vuelta atrás.
                 </p>
-                <button
-                  type="button"
-                  onClick={askDelete}
-                  disabled={deleting}
-                  className="px-4 py-2 rounded bg-rose-600 hover:bg-rose-500 text-white disabled:opacity-60"
-                >
-                  {deleting ? "Eliminando…" : "Eliminar evento"}
-                </button>
+                <div className="flex gap-3 pt-2">
+                  <button
+                    type="button"
+                    onClick={askDelete}
+                    disabled={deleting}
+                    className="px-4 py-2 rounded bg-rose-600 hover:bg-rose-500 text-white disabled:opacity-60"
+                  >
+                    {deleting ? "Eliminando…" : "Eliminar evento"}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleCancel}
+                    className="px-4 py-2 rounded bg-[#8e2afc] hover:bg-[#7b1fe0] disabled:opacity-60"
+                  >
+                    Cancelar
+                  </button>
+                </div>
               </section>
-
               <Section title="Información del Evento">
                 <RHFInput
                   name="nombre"
@@ -602,7 +589,6 @@ export default function EventDetailPage() {
                   placeholder="Selecciona el tipo"
                 />
               </Section>
-
               <Section title="Fecha & Horario">
                 <RHFInput name="fecha" type="date" label="Fecha del Evento *" />
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -610,7 +596,6 @@ export default function EventDetailPage() {
                   <RHFInput name="horaCierre" type="time" label="Hora de Cierre *" />
                 </div>
               </Section>
-
               <Section title="Capacidad & Contacto">
                 <RHFSelect
                   name="capacidad"
@@ -623,7 +608,6 @@ export default function EventDetailPage() {
                 <RHFInput name="email" type="email" label="Email *" placeholder="promotor@goup.com" />
                 <RHFInput name="presupuesto" label="Presupuesto (opcional)" placeholder="USD/CLP/etc." />
               </Section>
-
               <Section title="Concepto & Experiencia">
                 <RHFTextarea
                   name="desc"
@@ -636,8 +620,14 @@ export default function EventDetailPage() {
                   label="Géneros musicales (puedes elegir varios) *"
                   options={[...generosMusicales]}
                 />
+                {showOtroGenero && (
+                  <RHFInput
+                    name="generosOtro"
+                    label="Especifica el otro género musical"
+                    placeholder="Ej: Funk Carioca, Experimental, Indie, etc."
+                  />
+                )}
               </Section>
-
               <Section title="Políticas del evento">
                 <RHFSelect
                   name="edad"
@@ -656,7 +646,6 @@ export default function EventDetailPage() {
                 <RHFSelect name="tieneLineup" label="¿Tendrá DJs con line-up?" options={["Sí", "No"]} />
                 <LineupFields />
               </Section>
-
               <Section title="Imágenes">
                 <div className="grid md:grid-cols-2 gap-6">
                   <div>
@@ -670,7 +659,6 @@ export default function EventDetailPage() {
                     </div>
                     <RHFFile name="flyer" label="Reemplazar flyer (opcional)" />
                   </div>
-
                   <div>
                     <div className="text-white/70 text-sm mb-2">Imagen secundaria actual</div>
                     <div className="rounded overflow-hidden border border-white/10 mb-3">
@@ -684,7 +672,6 @@ export default function EventDetailPage() {
                   </div>
                 </div>
               </Section>
-
               <div className="flex gap-3 pt-2">
                 <button
                   type="button"
@@ -704,10 +691,9 @@ export default function EventDetailPage() {
             </form>
           </FormProvider>
         )}
-
         {/* Modal de confirmación al guardar */}
         {confirmOpen && (
-          <div className="fixed inset-0 z-50 grid place-items-center bg-black/60">
+          <div className="fixed z-50 inset-0 grid place-items-center bg-black/60">
             <div className="bg-neutral-900 rounded-md p-6 w-[92vw] max-w-md text-center border border-white/10">
               <h3 className="text-lg font-semibold mb-2">¿Guardar los cambios?</h3>
               <p className="text-white/70 mb-5">Se actualizarán los datos del evento.</p>
@@ -721,7 +707,7 @@ export default function EventDetailPage() {
                 <button
                   className="px-4 py-2 rounded bg-[#8e2afc] hover:bg-[#7b1fe0]"
                   disabled={saving}
-                  onClick={() => onConfirmSave()}
+                  onClick={methods.handleSubmit(onConfirmSave)}
                 >
                   Sí, guardar
                 </button>
@@ -729,7 +715,6 @@ export default function EventDetailPage() {
             </div>
           </div>
         )}
-
         {/* Modal de confirmación de borrado */}
         {confirmDeleteOpen && (
           <div className="fixed inset-0 z-50 grid place-items-center bg-black/70">
@@ -762,7 +747,7 @@ export default function EventDetailPage() {
   );
 }
 
-/* ======= Componentes UI pequeños ======= */
+// ======= Componentes UI pequeños =======
 function Card({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <section className="rounded-xl border border-white/10 bg-white/[0.03] backdrop-blur p-5">
@@ -794,3 +779,5 @@ function Section({ title, children }: { title: string; children: React.ReactNode
     </section>
   );
 }
+
+

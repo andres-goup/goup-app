@@ -1,38 +1,46 @@
 // src/components/UserEvents.tsx
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
-import { supabase } from "@/lib/supabase";
+import {
+  collection,
+  query,
+  where,
+  getDocs,
+  DocumentData,
+  Query,
+} from "firebase/firestore";
 import { useAuth } from "@/auth/AuthContext";
+import { db as firebaseDb } from "@/lib/firebase";
 
 type Evento = {
   id_evento: string;
-  id_usuario?: string;
+  uid_usersWeb: string;
   nombre: string;
   tipo: string;
-  fecha: string; // 'YYYY-MM-DD' (asumido)
-  horaInicio?: string | null; // 'HH:mm' (asumido)
+  fecha: string; // 'YYYY-MM-DD'
+  horaInicio?: string | null;
   horaCierre?: string | null;
   flyer?: string | null;
   imgSec?: string | null;
   desc?: string | null;
-  generos: string[] | string | null; // puede venir como array o string
+  generos: string[] | string | null;
 };
 
 const normalizeGeneros = (g: Evento["generos"]): string[] => {
   if (Array.isArray(g)) return g;
   if (typeof g === "string") {
-    const bySep = g.split(/[,;|]/).map(s => s.trim()).filter(Boolean);
-    if (bySep.length > 1) return bySep;
-    return g.trim() ? [g.trim()] : [];
+    const bySep = g
+      .split(/[,;|]/)
+      .map((s) => s.trim())
+      .filter(Boolean);
+    return bySep.length > 0 ? bySep : [];
   }
   return [];
 };
 
-// Combina fecha + horaInicio para comparar
 function getStartDate(e: Evento): Date {
-  const d = e.fecha ?? "";
+  const d = e.fecha;
   const t = e.horaInicio ?? "00:00";
-  // Si fecha ya es ISO con tiempo, intenta desambiguar
   if (d.includes("T")) return new Date(d);
   return new Date(`${d}T${t}`);
 }
@@ -47,66 +55,74 @@ export default function UserEvents() {
     const fetchEventos = async () => {
       if (!user) return;
 
-      // 1) id_usuario
-      const { data: usuarioData, error: userError } = await supabase
-        .from("usuario")
-        .select("id_usuario")
-        .eq("auth_user_id", user.id)
-        .single();
+      setLoading(true);
+      try {
+        // 1) Referenciamos la colección directamente sobre firebaseDb
+        const eventosCol = collection(firebaseDb, "Eventos");
+        // 2) Construimos la query
+        const q: Query = query(
+          eventosCol,
+          where("uid_usersWeb", "==", "/usersWeb/"+user.uid)
+        );
+        // 3) Ejecutamos
+        const snap = await getDocs(q);
 
-      if (userError || !usuarioData) {
-        console.error("Error obteniendo usuario:", userError);
+        const events: Evento[] = snap.docs.map((doc) => {
+          const data = doc.data() as DocumentData;
+          return {
+            id_evento: doc.id,
+            uid_usersWeb: data.uid,
+            nombre: data.nombre,
+            tipo: data.tipo,
+            fecha: data.fecha,
+            horaInicio: data.horaInicio ?? null,
+            horaCierre: data.horaCierre ?? null,
+            flyer: data.flyer ?? null,
+            imgSec: data.imgSec ?? null,
+            desc: data.desc ?? null,
+            generos: data.generos ?? null,
+          };
+        });
+
+        setEventos(events);
+      } catch (err) {
+        console.error("Error cargando eventos:", err);
+      } finally {
         setLoading(false);
-        return;
       }
-
-      const { id_usuario } = usuarioData;
-
-      // 2) eventos del usuario
-      const { data: eventosData, error: eventosError } = await supabase
-        .from("evento")
-        .select("id_evento, id_usuario, nombre, fecha, tipo, flyer, imgSec, desc, horaInicio, horaCierre, generos")
-        .eq("id_usuario", id_usuario);
-
-      if (eventosError) {
-        console.error("Error obteniendo eventos:", eventosError);
-        setLoading(false);
-        return;
-      }
-
-      setEventos((eventosData as Evento[]) || []);
-      setLoading(false);
     };
 
     fetchEventos();
   }, [user]);
 
   const now = new Date();
-
   const { upcoming, past } = useMemo(() => {
-    const upcoming: Evento[] = [];
-    const past: Evento[] = [];
+    const up: Evento[] = [];
+    const pa: Evento[] = [];
+
     for (const e of eventos) {
       const start = getStartDate(e);
-      if (isNaN(start.getTime())) {
-        // Si por alguna razón no se puede parsear, mándalo a "past" para no bloquear
-        past.push(e);
+      if (isNaN(start.getTime()) || start <= now) {
+        pa.push(e);
       } else {
-        if (start > now) upcoming.push(e);
-        else past.push(e);
+        up.push(e);
       }
     }
-    // Ordenes amistosas
-    upcoming.sort((a, b) => +getStartDate(a) - +getStartDate(b)); // más próximos primero
-    past.sort((a, b) => +getStartDate(b) - +getStartDate(a)); // últimos realizados primero
-    return { upcoming, past };
+
+    up.sort((a, b) => getStartDate(a).getTime() - getStartDate(b).getTime());
+    pa.sort((a, b) => getStartDate(b).getTime() - getStartDate(a).getTime());
+
+    return { upcoming: up, past: pa };
   }, [eventos]);
 
   const list = tab === "upcoming" ? upcoming : past;
 
-  if (loading) return <p className="text-white">Cargando eventos...</p>;
-  if (eventos.length === 0)
+  if (loading) {
+    return <p className="text-white">Cargando eventos...</p>;
+  }
+  if (eventos.length === 0) {
     return <p className="text-white/80">No tienes eventos registrados.</p>;
+  }
 
   return (
     <div className="max-w-6xl mx-auto">
@@ -134,21 +150,19 @@ export default function UserEvents() {
         </button>
       </div>
 
-      {/* Nota de sección */}
       <p className="text-white/70 mb-4">
         {tab === "upcoming"
           ? "Eventos posteriores a la fecha/hora actual."
           : "Eventos que ya se realizaron."}
       </p>
 
-      {/* Grid de cards */}
       <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
         {list.map((evento) => {
           const generosList = normalizeGeneros(evento.generos);
           const start = getStartDate(evento);
           const fechaLegible = isNaN(start.getTime())
             ? evento.fecha
-            : start.toLocaleString(); // fecha + hora amigable
+            : start.toLocaleString();
 
           return (
             <div
@@ -177,7 +191,9 @@ export default function UserEvents() {
                 </p>
 
                 {evento.desc && (
-                  <p className="text-sm text-white/70 mt-1 line-clamp-2">{evento.desc}</p>
+                  <p className="text-sm text-white/70 mt-1 line-clamp-2">
+                    {evento.desc}
+                  </p>
                 )}
 
                 {generosList.length > 0 && (
@@ -207,7 +223,6 @@ export default function UserEvents() {
         })}
       </div>
 
-      {/* Mensajes vacíos por sección */}
       {list.length === 0 && (
         <div className="text-white/70 mt-6">
           {tab === "upcoming"
