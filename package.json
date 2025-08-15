@@ -2,12 +2,15 @@
   "name": "goupapp",
   "version": "0.0.1",
   "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=18 <23"
+  },
   "scripts": {
-    "dev": "vite",
+    "dev": "vite --host 0.0.0.0 --port 5173",
     "build": "vite build",
     "preview": "vite preview",
-    "predeploy": "npm run build",
-    "deploy": "gh-pages -d dist"
+    "start": "node server.js"
   },
   "dependencies": {
     "@emotion/react": "^11.14.0",
@@ -18,12 +21,15 @@
     "@react-google-maps/api": "^2.20.7",
     "@sendgrid/mail": "^8.1.5",
     "@supabase/supabase-js": "^2.52.1",
+    "compression": "^1.8.1",
     "express": "^5.1.0",
     "firebase": "^12.0.0",
     "firebase-admin": "^13.4.0",
     "framer-motion": "^12.23.12",
+    "helmet": "^8.1.0",
     "leaflet": "^1.9.4",
     "lucide-react": "^0.441.0",
+    "morgan": "^1.10.1",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "react-hook-form": "^7.61.0",

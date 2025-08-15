@@ -1,18 +1,17 @@
-// server.js (ESM)
-import express from 'express';
-import path from 'path';
-import { fileURLToPath } from 'url';
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+import express from "express";
+import path from "path";
+import { fileURLToPath } from "url";
+import compression from "compression";
 
 const app = express();
 const port = process.env.PORT || 8080;
-const dist = path.join(__dirname, 'dist');
 
-app.use(express.static(dist));
-app.get('*', (_req, res) => res.sendFile(path.join(dist, 'index.html')));
+// Catch-all → redirige todas las rutas a index.html
+app.get("*", (_req, res) => {
+  res.sendFile(path.join(distPath, "index.html"));
+});
 
+// Start server
 app.listen(port, () => {
-  console.log(`App listening on port ${port}`);
+  console.log(`✅ Server running on http://localhost:${port}`);
 });
