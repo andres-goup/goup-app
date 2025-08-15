@@ -17,15 +17,6 @@ const __dirname = path.dirname(__filename);
 // app.use(helmet());
 // app.use(morgan("dev"));
 
-// Carpeta estática (dist de Vite)
-const distPath = path.join(__dirname, "dist");
-app.use(express.static(distPath));
-
-// Catch-all -> redirige todas las rutas a index.html
-app.get("*", (_req, res) => {
-  res.sendFile(path.join(distPath, "index.html"));
-});
-
 app.listen(port, () => {
   console.log(`✅ Server running on http://localhost:${port}`);
 });
