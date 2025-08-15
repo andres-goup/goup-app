@@ -15,7 +15,7 @@ const __dirname = path.dirname(__filename);
 // Middleware
 app.use(compression());
 app.use(helmet());
-app.use(morgan("dev"));
+// app.use(morgan("dev"));
 
 // Carpeta estática (dist de Vite)
 const distPath = path.join(__dirname, "dist");
