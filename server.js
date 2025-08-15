@@ -14,7 +14,7 @@ const __dirname = path.dirname(__filename);
 
 // Middleware
 app.use(compression());
-app.use(helmet());
+// app.use(helmet());
 // app.use(morgan("dev"));
 
 // Carpeta estática (dist de Vite)
